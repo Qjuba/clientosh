@@ -1,0 +1,11 @@
+* text=auto
+
+# Shell scripts must keep LF even on Windows checkouts
+*.sh text eol=lf
+
+# Workflow files
+.github/workflows/* text eol=lf
+
+# Binary assets
+*.ico binary
+*.png binary

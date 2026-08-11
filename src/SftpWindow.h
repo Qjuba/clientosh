@@ -60,6 +60,7 @@ private:
     void goUp();
     void downloadSelected();
     void uploadFiles();
+    void cancelTransfers();
     void uploadLocalPaths(const QStringList& paths);
     void uploadLocalPathsTo(const QStringList& paths, const QString& remoteDir);
     void createFolder();
@@ -103,9 +104,11 @@ private:
     QToolButton* m_dotfilesBtn = nullptr;
     QTableWidget* m_table = nullptr;
     QProgressBar* m_progress = nullptr;
+    QToolButton* m_cancelBtn = nullptr;
     QLabel* m_status = nullptr;
 
     bool m_busy = false;
+    bool m_cancelling = false;
 
     QStringList m_transferQueue;
     bool m_transferInFlight = false;

@@ -146,6 +146,12 @@ void SftpClient::setVerboseEnabled(bool enabled)
     vlog(enabled ? QStringLiteral("verbose logging enabled") : QStringLiteral("verbose logging disabled"));
 }
 
+void SftpClient::cancelTransfer()
+{
+    m_cancelRequested.storeRelaxed(true);
+}
+
+
 bool SftpClient::mkdirP(const QString& remoteDir, void* sftpVoid)
 {
     auto* sftp = static_cast<sftp_session>(sftpVoid);
@@ -498,6 +504,7 @@ void SftpClient::listDirectory(const QString& path)
 
 void SftpClient::downloadFile(const QString& remotePath, const QString& localPath)
 {
+    m_cancelRequested.storeRelaxed(false);
     vlog(QStringLiteral("downloadFile: remote='%1' local='%2' cwd='%3'").arg(remotePath, localPath, m_cwd));
     QString err;
     if (!ensureConnected(&err)) {
@@ -542,6 +549,15 @@ void SftpClient::downloadFile(const QString& remotePath, const QString& localPat
     char buffer[32768];
     qint64 done = 0;
     while (true) {
+        if (isCancelled()) {
+            sftp_close(file);
+            out.close();
+            QFile::remove(localPath);
+            vlog(QStringLiteral("downloadFile: cancelled remote='%1' after %2/%3 bytes").arg(remote).arg(done).arg(total));
+            emit transferFinished(false, QStringLiteral("cancelled %1 (%2 bytes)").arg(remote).arg(done));
+            emit statusChanged(QStringLiteral("download cancelled"));
+            return;
+        }
         const ssize_t n = sftp_read(file, buffer, sizeof(buffer));
         if (n < 0) {
             const QString detail = sftpErrorString();
@@ -584,6 +600,7 @@ void SftpClient::downloadFile(const QString& remotePath, const QString& localPat
 
 void SftpClient::uploadFile(const QString& localPath, const QString& remotePath)
 {
+    m_cancelRequested.storeRelaxed(false);
     vlog(QStringLiteral("uploadFile: local='%1' remote='%2' cwd='%3'").arg(localPath, remotePath, m_cwd));
     QString err;
     if (!ensureConnected(&err)) {
@@ -634,6 +651,14 @@ void SftpClient::uploadFile(const QString& localPath, const QString& remotePath)
     qint64 done = 0;
     char buffer[32768];
     while (true) {
+        if (isCancelled()) {
+            sftp_close(file);
+            in.close();
+            vlog(QStringLiteral("uploadFile: cancelled remote='%1' after %2/%3 bytes").arg(remote).arg(done).arg(total));
+            emit transferFinished(false, QStringLiteral("cancelled %1 (%2 bytes)").arg(remote).arg(done));
+            emit statusChanged(QStringLiteral("upload cancelled"));
+            return;
+        }
         const qint64 n = in.read(buffer, sizeof(buffer));
         if (n < 0) {
             vlog(QStringLiteral("uploadFile: local read failed after %1 bytes err=%2").arg(done).arg(in.errorString()));
@@ -681,6 +706,7 @@ void SftpClient::uploadFile(const QString& localPath, const QString& remotePath)
 
 void SftpClient::uploadPath(const QString& localPath, const QString& remoteDir)
 {
+    m_cancelRequested.storeRelaxed(false);
     vlog(QStringLiteral("uploadPath: local='%1' remoteDir='%2' cwd='%3'").arg(localPath, remoteDir, m_cwd));
     QString err;
     if (!ensureConnected(&err)) {
@@ -736,6 +762,12 @@ bool SftpClient::uploadPathRec(const QString& localPath, const QString& remoteDi
         const QStringList entries = dir.entryList(QDir::NoDotAndDotDot | QDir::AllEntries);
         vlog(QStringLiteral("uploadPathRec: dir '%1' has %2 entries -> remote '%3'").arg(localPath).arg(entries.size()).arg(remote));
         for (const QString& entry : entries) {
+            if (isCancelled()) {
+                vlog(QStringLiteral("uploadPathRec: dir upload cancelled after '%1'").arg(remote));
+                emit transferFinished(false, QStringLiteral("cancelled %1").arg(remote));
+                emit statusChanged(QStringLiteral("upload cancelled"));
+                return false;
+            }
             if (!uploadPathRec(dir.filePath(entry), remote, sftp)) {
                 return false;
             }
@@ -825,6 +857,14 @@ bool SftpClient::uploadPathRec(const QString& localPath, const QString& remoteDi
     qint64 done = 0;
     char buffer[32768];
     while (true) {
+        if (isCancelled()) {
+            sftp_close(file);
+            in.close();
+            vlog(QStringLiteral("uploadPathRec: cancelled remote='%1' after %2/%3 bytes").arg(remote).arg(done).arg(total));
+            emit transferFinished(false, QStringLiteral("cancelled %1 (%2 bytes)").arg(remote).arg(done));
+            emit statusChanged(QStringLiteral("upload cancelled"));
+            return false;
+        }
         const qint64 n = in.read(buffer, sizeof(buffer));
         if (n < 0) {
             vlog(QStringLiteral("uploadPathRec: local read failed after %1 bytes err=%2").arg(done).arg(in.errorString()));

@@ -2,6 +2,7 @@
 
 #include "SessionProfile.h"
 
+#include <QAtomicInteger>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -37,6 +38,7 @@ public slots:
     void removePath(const QString& path, bool isDir);
     void renamePath(const QString& from, const QString& to);
     void setVerboseEnabled(bool enabled);
+    void cancelTransfer();
 
 signals:
     void connected(const QString& homePath);
@@ -59,10 +61,12 @@ private:
     bool ensureParentDirExists(const QString& remoteFilePath, void* sftp);
     void vlog(const QString& msg);
     QString sftpErrorString() const;
+    bool isCancelled() const { return m_cancelRequested.loadRelaxed(); }
 
     void* m_session = nullptr; // ssh_session
     void* m_sftp = nullptr;    // sftp_session
     QString m_cwd;
     bool m_connected = false;
     bool m_verbose = false;
+    QAtomicInteger<bool> m_cancelRequested = false;
 };

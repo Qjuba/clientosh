@@ -215,6 +215,19 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
     m_progress->setFixedHeight(14);
     m_progress->hide();
 
+    m_cancelBtn = new QToolButton(this);
+    m_cancelBtn->setObjectName(QStringLiteral("sftpCancel"));
+    m_cancelBtn->setText(QStringLiteral("cancel"));
+    m_cancelBtn->setToolTip(QStringLiteral("cancel active uploads/downloads"));
+    m_cancelBtn->hide();
+
+    auto* transferRow = new QWidget(this);
+    auto* transferLay = new QHBoxLayout(transferRow);
+    transferLay->setContentsMargins(0, 0, 0, 0);
+    transferLay->setSpacing(4);
+    transferLay->addWidget(m_progress, 1);
+    transferLay->addWidget(m_cancelBtn);
+
     m_status = new QLabel(QStringLiteral("connecting…"), this);
     m_status->setObjectName(QStringLiteral("dashHint"));
     m_status->setContentsMargins(8, 4, 8, 6);
@@ -222,8 +235,10 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
     root->addWidget(nav);
     root->addWidget(pathBar);
     root->addWidget(m_table, 1);
-    root->addWidget(m_progress);
+    root->addWidget(transferRow);
     root->addWidget(m_status);
+
+    connect(m_cancelBtn, &QToolButton::clicked, this, &SftpWindow::cancelTransfers);
 
     applyAppSettings();
     syncDotfilesToggle();
@@ -267,6 +282,7 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
     connect(m_client, &SftpClient::transferProgress, this,
             [this](const QString& label, qint64 done, qint64 total) {
                 m_progress->show();
+                m_cancelBtn->show();
                 if (total > 0) {
                     m_progress->setRange(0, 100);
                     m_progress->setValue(static_cast<int>((done * 100) / total));
@@ -278,6 +294,9 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
             });
     connect(m_client, &SftpClient::transferFinished, this, [this](bool ok, const QString& msg) {
         m_transferInFlight = false;
+        const bool wasCancelling = m_cancelling;
+        m_cancelling = false;
+        m_cancelBtn->hide();
         if (ok) {
             ++m_doneItems;
         }
@@ -286,7 +305,9 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
             m_progress->setRange(0, 100);
             m_progress->setValue(0);
             setBusy(false);
-            if (!ok) {
+            if (wasCancelling) {
+                m_status->setText(QStringLiteral("transfers cancelled"));
+            } else if (!ok) {
                 m_status->setText(msg);
                 QMessageBox::warning(this, QStringLiteral("sftp"), msg);
             } else if (m_queuedItems > 1) {
@@ -300,6 +321,18 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
             m_doneItems = 0;
             m_queuedItems = 0;
             m_queueSummary.clear();
+        } else if (wasCancelling) {
+            // A queued batch was cancelled: drop whatever remains in the queue.
+            m_progress->hide();
+            m_progress->setRange(0, 100);
+            m_progress->setValue(0);
+            setBusy(false);
+            m_transferQueue.clear();
+            m_doneItems = 0;
+            m_queuedItems = 0;
+            m_queueSummary.clear();
+            m_status->setText(QStringLiteral("transfers cancelled"));
+            refresh();
         } else {
             if (!ok) {
                 m_status->setText(msg);
@@ -696,6 +729,23 @@ void SftpWindow::uploadLocalPathsTo(const QStringList& paths, const QString& rem
     setBusy(true);
     m_progress->show();
     pumpQueue();
+}
+
+void SftpWindow::cancelTransfers()
+{
+    if (!m_busy && !m_transferInFlight) {
+        m_cancelBtn->hide();
+        return;
+    }
+    m_cancelling = true;
+    m_cancelBtn->hide();
+    emit debugLog(QStringLiteral("cancelTransfers: cancelling active transfers, dropping %1 queued items")
+                      .arg(m_transferQueue.size()));
+    m_transferQueue.clear();
+    m_doneItems = 0;
+    m_queuedItems = 0;
+    QMetaObject::invokeMethod(m_client, "cancelTransfer", Qt::QueuedConnection);
+    m_status->setText(QStringLiteral("cancelling…"));
 }
 
 void SftpWindow::pumpQueue()

@@ -75,21 +75,19 @@ Source: "{#BuildDir}\libwinpthread-1.dll";  DestDir: "{app}"; Flags: ignoreversi
 Source: "{#BuildDir}\zlib1.dll";            DestDir: "{app}"; Flags: ignoreversion
 
 ; Qt platform plugin
-Source: "{#BuildDir}\platforms\qwindows.dll";               DestDir: "{app}\platforms";    Flags: ignoreversion
+Source: "{#BuildDir}\platforms\*.dll";                      DestDir: "{app}\platforms";    Flags: ignoreversion
 
 ; Qt image format plugins
-Source: "{#BuildDir}\imageformats\qgif.dll";                DestDir: "{app}\imageformats"; Flags: ignoreversion
-Source: "{#BuildDir}\imageformats\qicns.dll";               DestDir: "{app}\imageformats"; Flags: ignoreversion
-Source: "{#BuildDir}\imageformats\qico.dll";                DestDir: "{app}\imageformats"; Flags: ignoreversion
-Source: "{#BuildDir}\imageformats\qjpeg.dll";               DestDir: "{app}\imageformats"; Flags: ignoreversion
-Source: "{#BuildDir}\imageformats\qsvg.dll";                DestDir: "{app}\imageformats"; Flags: ignoreversion
-Source: "{#BuildDir}\imageformats\qtga.dll";                DestDir: "{app}\imageformats"; Flags: ignoreversion
-Source: "{#BuildDir}\imageformats\qtiff.dll";               DestDir: "{app}\imageformats"; Flags: ignoreversion
-Source: "{#BuildDir}\imageformats\qwbmp.dll";               DestDir: "{app}\imageformats"; Flags: ignoreversion
-Source: "{#BuildDir}\imageformats\qwebp.dll";               DestDir: "{app}\imageformats"; Flags: ignoreversion
+Source: "{#BuildDir}\imageformats\*.dll";                   DestDir: "{app}\imageformats"; Flags: ignoreversion
 
 ; Qt style plugin
-Source: "{#BuildDir}\styles\qmodernwindowsstyle.dll";       DestDir: "{app}\styles";       Flags: ignoreversion
+Source: "{#BuildDir}\styles\*.dll";                         DestDir: "{app}\styles";       Flags: ignoreversion
+
+; Qt TLS / network / icon engine / generic plugins (added by windeployqt)
+Source: "{#BuildDir}\tls\*.dll";                            DestDir: "{app}\tls";          Flags: ignoreversion
+Source: "{#BuildDir}\networkinformation\*.dll";             DestDir: "{app}\networkinformation"; Flags: ignoreversion
+Source: "{#BuildDir}\iconengines\*.dll";                    DestDir: "{app}\iconengines";  Flags: ignoreversion
+Source: "{#BuildDir}\generic\*.dll";                        DestDir: "{app}\generic";      Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}";          Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\clientosh.ico"

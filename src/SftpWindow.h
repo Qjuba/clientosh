@@ -13,6 +13,7 @@ class QLabel;
 class QLineEdit;
 class QToolButton;
 class QTableWidget;
+class QTableWidgetItem;
 class QProgressBar;
 class QThread;
 class QPushButton;
@@ -23,6 +24,7 @@ class QFileSystemWatcher;
 class QTimer;
 class QModelIndex;
 class QPoint;
+class QAction;
 
 struct EditedRemoteFile {
     QString remotePath; // absolute remote path on the SFTP server
@@ -56,7 +58,6 @@ protected:
 private:
     void refresh();
     void goUp();
-    void openSelected();
     void downloadSelected();
     void uploadFiles();
     void uploadLocalPaths(const QStringList& paths);

@@ -385,6 +385,16 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
 
 SftpWindow::~SftpWindow()
 {
+    if (m_syncTimer) {
+        m_syncTimer->stop();
+    }
+    for (auto it = m_editedFiles.constBegin(); it != m_editedFiles.constEnd(); ++it) {
+        if (m_fileWatcher && m_fileWatcher->files().contains(it->localPath)) {
+            m_fileWatcher->removePath(it->localPath);
+        }
+        QFile::remove(it->localPath);
+    }
+    m_editedFiles.clear();
     if (m_client) {
         QMetaObject::invokeMethod(m_client, "disconnectHost", Qt::QueuedConnection);
     }
@@ -986,7 +996,7 @@ void SftpWindow::onDownloadedForEdit(bool ok, const QString& message, const QStr
 
 void SftpWindow::checkEditedFiles()
 {
-    if (m_editedFiles.isEmpty()) {
+    if (m_editedFiles.isEmpty() || m_busy) {
         return;
     }
     for (auto it = m_editedFiles.begin(); it != m_editedFiles.end();) {
@@ -1005,6 +1015,8 @@ void SftpWindow::checkEditedFiles()
         }
         e.lastModified = mtime;
         const QString localPath = e.localPath;
+        m_pendingEditUpload = true;
+        m_pendingUploadRemote = remotePath;
         QMetaObject::invokeMethod(m_client, "uploadFile", Qt::QueuedConnection,
                                   Q_ARG(QString, localPath), Q_ARG(QString, remotePath));
         emit debugLog(QStringLiteral("edit: auto-uploading changed '%1'").arg(remotePath));

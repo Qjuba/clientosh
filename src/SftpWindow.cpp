@@ -318,10 +318,11 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
                     m_pendingEditRemote.clear();
                     m_pendingEditLocal.clear();
                     onDownloadedForEdit(ok, msg, remote, local);
-                } else if (m_pendingEditUpload) {
-                    const QString remote = m_pendingUploadRemote;
-                    m_pendingEditUpload = false;
-                    m_pendingUploadRemote.clear();
+                } else if (!m_pendingEditUploads.isEmpty()) {
+                    // Auto-uploads can be issued in bursts (several files changed
+                    // within one timer tick); each completion consumes the first
+                    // still-pending remote in submission order.
+                    const QString remote = m_pendingEditUploads.takeFirst();
                     onEditedFileUploaded(ok, msg, remote);
                 }
             });
@@ -569,34 +570,6 @@ void SftpWindow::goUp()
     setBusy(true);
     QMetaObject::invokeMethod(m_client, "listDirectory", Qt::QueuedConnection,
                               Q_ARG(QString, parentPath(m_cwd)));
-}
-
-void SftpWindow::openSelected()
-{
-    if (m_busy) {
-        return;
-    }
-    const auto rows = m_table->selectionModel()->selectedRows();
-    if (rows.isEmpty()) {
-        return;
-    }
-    const int row = rows.first().row();
-    auto* item = m_table->item(row, 0);
-    if (!item) {
-        return;
-    }
-    if (item->data(Qt::UserRole + 2).toBool()) {
-        goUp();
-        return;
-    }
-    const bool isDir = item->data(Qt::UserRole).toBool();
-    if (isDir) {
-        setBusy(true);
-        QMetaObject::invokeMethod(m_client, "listDirectory", Qt::QueuedConnection,
-                                  Q_ARG(QString, joinRemote(item->text())));
-    } else {
-        editRemoteFile(joinRemote(item->text()), item->text());
-    }
 }
 
 void SftpWindow::openOrEditSelected()
@@ -1015,8 +988,7 @@ void SftpWindow::checkEditedFiles()
         }
         e.lastModified = mtime;
         const QString localPath = e.localPath;
-        m_pendingEditUpload = true;
-        m_pendingUploadRemote = remotePath;
+        m_pendingEditUploads.push_back(remotePath);
         QMetaObject::invokeMethod(m_client, "uploadFile", Qt::QueuedConnection,
                                   Q_ARG(QString, localPath), Q_ARG(QString, remotePath));
         emit debugLog(QStringLiteral("edit: auto-uploading changed '%1'").arg(remotePath));

@@ -123,6 +123,5 @@ private:
     bool m_pendingEditDownload = false;
     QString m_pendingEditRemote;
     QString m_pendingEditLocal;
-    bool m_pendingEditUpload = false;
-    QString m_pendingUploadRemote;
+    QStringList m_pendingEditUploads; // remotes pending an auto-upload completion
 };

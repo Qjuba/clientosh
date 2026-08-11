@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.clientosh</id>
+  <name>clientosh</name>
+  <summary>Raw dark-gray SSH client</summary>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>
+      clientosh is a lightweight SSH client built with Qt 6 and libssh.
+      It provides a dark monospace UI with session management, detachable
+      terminals, scrollback, and keyword highlighting.
+    </p>
+  </description>
+  <launchable type="desktop-id">clientosh.desktop</launchable>
+  <categories>
+    <category>Network</category>
+    <category>RemoteAccess</category>
+  </categories>
+</component>

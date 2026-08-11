@@ -1,0 +1,49 @@
+# Build directories
+/build/
+/build-*/
+/cmake-build-*/
+/bin/
+/out/
+
+# Visual Studio
+/.vs/
+/vs/work/
+
+# IDE / editor
+/.vscode/
+/.idea/
+*.user
+*.autosave
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+CTestTestfile.cmake
+compile_commands.json
+Makefile
+*.cmake.user
+
+# Compiled binaries & packages
+*.exe
+*.dll
+*.so
+*.dylib
+*.deb
+*.rpm
+*.AppImage
+*.dmg
+*.msi
+*.setup.*
+*.apk
+*.a
+*.o
+*.obj
+
+# Packaging logs
+packaging/build_err.log
+
+# Misc
+.DS_Store
+Thumbs.db
+*.log

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=clientosh
+GenericName=SSH Client
+Comment=Raw dark-gray SSH client
+Exec=clientosh
+Icon=clientosh
+Terminal=false
+Categories=Network;RemoteAccess;
+Keywords=ssh;terminal;remote;
+StartupNotify=true

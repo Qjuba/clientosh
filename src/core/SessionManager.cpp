@@ -1,0 +1,249 @@
+#include "SessionManager.h"
+
+#include <QUuid>
+
+SessionManager::SessionManager(QObject* parent)
+    : QObject(parent)
+{
+}
+
+SessionManager::~SessionManager()
+{
+    const QStringList ids = m_order;
+    for (const QString& id : ids) {
+        closeSession(id);
+    }
+
+    // App is shutting down: wait for worker threads so QThread isn't destroyed mid-run.
+    const QVector<SshSession*> retiring = m_retiring;
+    m_retiring.clear();
+    for (SshSession* ssh : retiring) {
+        if (!ssh) {
+            continue;
+        }
+        ssh->disconnectFromHost();
+        ssh->wait(8000);
+        delete ssh;
+    }
+}
+
+SessionManager::LiveSession* SessionManager::session(const QString& id)
+{
+    return m_sessions.value(id, nullptr);
+}
+
+const SessionManager::LiveSession* SessionManager::session(const QString& id) const
+{
+    return m_sessions.value(id, nullptr);
+}
+
+QStringList SessionManager::sessionIds() const
+{
+    return m_order;
+}
+
+QString SessionManager::createSession(const SessionProfile& profile)
+{
+    auto* live = new LiveSession;
+    live->id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    live->profile = profile;
+    live->ssh = new SshSession(this);
+    live->status = QStringLiteral("preparing…");
+
+    wireSession(live);
+
+    m_sessions.insert(live->id, live);
+    m_order.push_back(live->id);
+    m_activeId = live->id;
+
+    emit sessionOpened(live->id);
+    emit sessionActivated(live->id);
+    emit sessionStatusChanged(live->id, live->status);
+
+    return live->id;
+}
+
+void SessionManager::connectSession(const QString& id, int cols, int rows)
+{
+    LiveSession* live = session(id);
+    if (!live || !live->ssh) {
+        return;
+    }
+
+    live->status = QStringLiteral("connecting...");
+    emit sessionStatusChanged(id, live->status);
+
+    live->ssh->resizePty(cols, rows);
+    live->ssh->connectTo(live->profile.host,
+                         live->profile.port,
+                         live->profile.user,
+                         live->profile.password,
+                         live->profile.privateKeyPath,
+                         live->profile.keyPassphrase);
+}
+
+QString SessionManager::openSession(const SessionProfile& profile, int cols, int rows)
+{
+    const QString id = createSession(profile);
+    connectSession(id, cols, rows);
+    return id;
+}
+
+void SessionManager::wireSession(LiveSession* live)
+{
+    const QString id = live->id;
+
+    connect(live->ssh, &SshSession::connected, this, [this, id]() {
+        if (auto* s = session(id)) {
+            s->connected = true;
+            s->status = s->profile.isSftpOnly() ? QStringLiteral("connected · SFTP")
+                                                : QStringLiteral("connected · SSH");
+            emit sessionConnectionChanged(id, true);
+            emit sessionStatusChanged(id, s->status);
+        }
+    });
+
+    connect(live->ssh, &SshSession::disconnected, this, [this, id]() {
+        if (auto* s = session(id)) {
+            s->connected = false;
+            s->status = QStringLiteral("disconnected");
+            emit sessionConnectionChanged(id, false);
+            emit sessionStatusChanged(id, s->status);
+            emit sessionDataReceived(id, QByteArray("\r\n[session closed]\r\n"));
+        }
+    });
+
+    connect(live->ssh, &SshSession::dataReceived, this, [this, id](const QByteArray& data) {
+        if (session(id)) {
+            emit sessionDataReceived(id, data);
+        }
+    });
+
+    connect(live->ssh, &SshSession::errorOccurred, this, [this, id](const QString& message) {
+        if (auto* s = session(id)) {
+            s->connected = false;
+            s->status = message;
+            emit sessionConnectionChanged(id, false);
+            emit sessionStatusChanged(id, s->status);
+            emit sessionError(id, message);
+            emit sessionDataReceived(
+                id,
+                (QStringLiteral("\r\n[error] ") + message + QStringLiteral("\r\n")).toUtf8());
+        }
+    });
+
+    connect(live->ssh, &SshSession::statusChanged, this, [this, id](const QString& status) {
+        if (auto* s = session(id)) {
+            QString sanitized = status;
+            if (status.startsWith(QLatin1String("connected "))) {
+                sanitized = s->profile.isSftpOnly() ? QStringLiteral("connected · SFTP")
+                                                    : QStringLiteral("connected · SSH");
+            } else if (status.startsWith(QLatin1String("connecting to "))) {
+                sanitized = s->profile.isSftpOnly() ? QStringLiteral("connecting sftp…")
+                                                    : QStringLiteral("connecting…");
+            }
+            s->status = sanitized;
+            emit sessionStatusChanged(id, sanitized);
+        }
+    });
+}
+
+void SessionManager::retireSsh(SshSession* ssh)
+{
+    if (!ssh) {
+        return;
+    }
+
+    QObject::disconnect(ssh, nullptr, this, nullptr);
+    ssh->setParent(nullptr);
+
+    if (!ssh->isRunning()) {
+        ssh->deleteLater();
+        return;
+    }
+
+    m_retiring.push_back(ssh);
+    connect(ssh, &QThread::finished, this, [this, ssh]() {
+        m_retiring.removeAll(ssh);
+        ssh->deleteLater();
+    });
+    ssh->disconnectFromHost();
+}
+
+void SessionManager::closeSession(const QString& id)
+{
+    LiveSession* live = m_sessions.take(id);
+    if (!live) {
+        return;
+    }
+    m_order.removeAll(id);
+    m_detached.remove(id);
+
+    retireSsh(live->ssh);
+    live->ssh = nullptr;
+    delete live;
+
+    if (m_activeId == id) {
+        m_activeId = m_order.isEmpty() ? QString() : m_order.last();
+        if (!m_activeId.isEmpty()) {
+            emit sessionActivated(m_activeId);
+        }
+    }
+
+    emit sessionClosed(id);
+}
+
+void SessionManager::disconnectSession(const QString& id)
+{
+    if (auto* s = session(id); s && s->ssh) {
+        s->ssh->disconnectFromHost();
+    }
+}
+
+void SessionManager::sendData(const QString& id, const QByteArray& data)
+{
+    if (auto* s = session(id); s && s->ssh) {
+        s->ssh->sendData(data);
+    }
+}
+
+void SessionManager::resizePty(const QString& id, int cols, int rows)
+{
+    if (auto* s = session(id); s && s->ssh) {
+        s->ssh->resizePty(cols, rows);
+    }
+}
+
+void SessionManager::activateSession(const QString& id)
+{
+    if (!m_sessions.contains(id) || m_activeId == id) {
+        return;
+    }
+    m_activeId = id;
+    emit sessionActivated(id);
+}
+
+void SessionManager::setDetached(const QString& id, bool detached)
+{
+    if (!m_sessions.contains(id)) {
+        return;
+    }
+    m_detached[id] = detached;
+    emit sessionDetachChanged(id, detached);
+}
+
+bool SessionManager::isDetached(const QString& id) const
+{
+    return m_detached.value(id, false);
+}
+
+QStringList SessionManager::attachedSessionIds() const
+{
+    QStringList out;
+    for (const QString& id : m_order) {
+        if (!isDetached(id)) {
+            out.push_back(id);
+        }
+    }
+    return out;
+}

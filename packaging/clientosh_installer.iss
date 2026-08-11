@@ -1,0 +1,100 @@
+; ============================================================
+;  clientosh – Inno Setup Script
+;  Output: clientosh-1.0.0-setup.exe
+; ============================================================
+
+#define AppName      "clientosh"
+#define AppVersion   "1.0.0"
+#define AppPublisher "clientosh"
+#define AppURL       "https://github.com/clientosh/clientosh"
+#define AppExeName   "clientosh.exe"
+#define BuildDir     "..\build"
+
+[Setup]
+AppId={{B7A3C1D2-4E5F-4A6B-8C9D-0E1F2A3B4C5D}
+AppName={#AppName}
+AppVersion={#AppVersion}
+AppPublisher={#AppPublisher}
+AppPublisherURL={#AppURL}
+AppSupportURL={#AppURL}
+AppUpdatesURL={#AppURL}
+DefaultDirName={autopf}\{#AppName}
+DefaultGroupName={#AppName}
+AllowNoIcons=yes
+LicenseFile=..\LICENSE
+OutputDir=..
+OutputBaseFilename=clientosh-{#AppVersion}-setup
+SetupIconFile=..\packaging\clientosh.ico
+UninstallDisplayIcon={app}\clientosh.ico
+UninstallDisplayName={#AppName} {#AppVersion}
+Compression=lzma2/ultra64
+SolidCompression=yes
+WizardStyle=modern
+PrivilegesRequired=admin
+ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
+RestartIfNeededByRun=no
+CloseApplications=yes
+DisableDirPage=auto
+VersionInfoVersion={#AppVersion}
+VersionInfoCompany={#AppPublisher}
+VersionInfoDescription={#AppName} SSH Client
+VersionInfoCopyright=MIT
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+
+[Files]
+; Main executable
+Source: "{#BuildDir}\clientosh.exe";       DestDir: "{app}"; Flags: ignoreversion
+
+; Application icon (used by shortcuts / uninstaller display)
+Source: "..\packaging\clientosh.ico";      DestDir: "{app}"; Flags: ignoreversion
+
+; Qt6 DLLs
+Source: "{#BuildDir}\Qt6Core.dll";          DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\Qt6Gui.dll";           DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\Qt6Network.dll";       DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\Qt6OpenGL.dll";        DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\Qt6OpenGLWidgets.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\Qt6Svg.dll";           DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\Qt6Widgets.dll";       DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\D3Dcompiler_47.dll";   DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\opengl32sw.dll";       DestDir: "{app}"; Flags: ignoreversion
+
+; libssh + OpenSSL + MinGW runtime DLLs
+Source: "{#BuildDir}\libssh.dll";           DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\libcrypto-3-x64.dll";  DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\libssl-3-x64.dll";     DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\libgcc_s_seh-1.dll";   DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\libstdc++-6.dll";      DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\libwinpthread-1.dll";  DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\zlib1.dll";            DestDir: "{app}"; Flags: ignoreversion
+
+; Qt platform plugin
+Source: "{#BuildDir}\platforms\qwindows.dll";               DestDir: "{app}\platforms";    Flags: ignoreversion
+
+; Qt image format plugins
+Source: "{#BuildDir}\imageformats\qgif.dll";                DestDir: "{app}\imageformats"; Flags: ignoreversion
+Source: "{#BuildDir}\imageformats\qicns.dll";               DestDir: "{app}\imageformats"; Flags: ignoreversion
+Source: "{#BuildDir}\imageformats\qico.dll";                DestDir: "{app}\imageformats"; Flags: ignoreversion
+Source: "{#BuildDir}\imageformats\qjpeg.dll";               DestDir: "{app}\imageformats"; Flags: ignoreversion
+Source: "{#BuildDir}\imageformats\qsvg.dll";                DestDir: "{app}\imageformats"; Flags: ignoreversion
+Source: "{#BuildDir}\imageformats\qtga.dll";                DestDir: "{app}\imageformats"; Flags: ignoreversion
+Source: "{#BuildDir}\imageformats\qtiff.dll";               DestDir: "{app}\imageformats"; Flags: ignoreversion
+Source: "{#BuildDir}\imageformats\qwbmp.dll";               DestDir: "{app}\imageformats"; Flags: ignoreversion
+Source: "{#BuildDir}\imageformats\qwebp.dll";               DestDir: "{app}\imageformats"; Flags: ignoreversion
+
+; Qt style plugin
+Source: "{#BuildDir}\styles\qmodernwindowsstyle.dll";       DestDir: "{app}\styles";       Flags: ignoreversion
+
+[Icons]
+Name: "{group}\{#AppName}";          Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\clientosh.ico"
+Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}";     IconFilename: "{app}\clientosh.ico"
+Name: "{autodesktop}\{#AppName}";    Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\clientosh.ico"; Tasks: desktopicon
+
+[Run]
+Filename: "{app}\{#AppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(AppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

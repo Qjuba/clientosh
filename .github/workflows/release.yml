@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    name: Build .deb (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config dpkg-dev \
+            qt6-base-dev libqt6svg6-dev libssh-dev
+
+      - name: Configure
+        run: cmake -S . -B build-deb -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+
+      - name: Build
+        run: cmake --build build-deb -j "$(nproc)"
+
+      - name: Package .deb
+        run: cmake --build build-deb --target package
+
+      - name: Find .deb
+        id: deb
+        run: |
+          file=$(find build-deb -maxdepth 1 -name '*.deb' -print -quit)
+          echo "path=$file" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload .deb to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ steps.deb.outputs.path }}
+          tag: ${{ github.ref }}
+          asset_name: ${{ steps.deb.outputs.name }}
+          overwrite: true
+
+  build-windows:
+    name: Build Windows installer
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MSYS2 deps
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-svg
+            mingw-w64-x86_64-libssh
+            mingw-w64-x86_64-openssl
+
+      - name: Configure
+        run: cmake -S . -B build-win -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-win -j 4
+
+      - name: Deploy Qt runtime DLLs
+        run: |
+          windeployqt --no-translations --release build-win/clientosh.exe
+
+      - name: Upload Windows build
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: build-win/clientosh.exe
+          tag: ${{ github.ref }}
+          asset_name: clientosh-${{ github.ref_name }}-win64.exe
+          overwrite: true

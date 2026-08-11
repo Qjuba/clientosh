@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Linux (Ubuntu, GCC)
+            os: ubuntu-latest
+            cmake_args: -G "Unix Makefiles"
+            build_dir: build-linux
+          - name: macOS (Clang)
+            os: macos-latest
+            cmake_args: -G "Unix Makefiles"
+            build_dir: build-macos
+          - name: Windows (MSYS2 MinGW)
+            os: windows-latest
+            shell: msys2 {0}
+            build_dir: build-win
+            msys2: MINGW64
+
+    defaults:
+      run:
+        shell: ${{ matrix.shell || 'bash' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt & deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qt6-base-dev libqt6svg6-dev libssh-dev
+
+      - name: Install deps (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew update
+          brew install qt libssh
+
+      - name: Install deps (Windows / MSYS2)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msys2 }}
+          update: true
+          install: >-
+            git
+            ninja
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-svg
+            mingw-w64-x86_64-libssh
+            mingw-w64-x86_64-openssl
+
+      - name: Configure
+        run: |
+          cmake -S . -B ${{ matrix.build_dir }} ${{ matrix.cmake_args }} \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: |
+          cmake --build ${{ matrix.build_dir }} -j 4
+
+      - name: Smoke test (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          test -x ${{ matrix.build_dir }}/clientosh
+          echo "clientosh built successfully"
+
+      - name: Smoke test (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          test -x ${{ matrix.build_dir }}/clientosh
+          echo "clientosh built successfully"
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          test -x ${{ matrix.build_dir }}/clientosh.exe
+          echo "clientosh.exe built successfully"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clientosh-${{ matrix.name }}
+          path: ${{ matrix.build_dir }}/clientosh*
+          if-no-files-found: ignore

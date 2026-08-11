@@ -135,15 +135,15 @@ TerminalWidget::TerminalWidget(QWidget* parent)
 void TerminalWidget::resetAttributes()
 {
     m_attr = Cell{};
-    m_attr.fg = m_defaultFg;
-    m_attr.bg = m_defaultBg;
+    m_attr.fg = m_defaultFg.rgb();
+    m_attr.bg = m_defaultBg.rgb();
 }
 
 TerminalWidget::Cell TerminalWidget::makeBlankCell() const
 {
     Cell c;
-    c.fg = m_defaultFg;
-    c.bg = m_defaultBg;
+    c.fg = m_defaultFg.rgb();
+    c.bg = m_defaultBg.rgb();
     return c;
 }
 
@@ -151,11 +151,13 @@ void TerminalWidget::remapDefaultColors(const QColor& oldFg, const QColor& oldBg
                                         const QColor& newBg)
 {
     auto remap = [&](Cell& cell) {
-        if (cell.fg == oldFg) {
-            cell.fg = newFg;
+        const QRgb oFg = oldFg.rgb();
+        const QRgb oBg = oldBg.rgb();
+        if (cell.fg == oFg) {
+            cell.fg = newFg.rgb();
         }
-        if (cell.bg == oldBg) {
-            cell.bg = newBg;
+        if (cell.bg == oBg) {
+            cell.bg = newBg.rgb();
         }
     };
     for (Cell& cell : m_cells) {
@@ -375,7 +377,7 @@ QColor TerminalWidget::ansiColor(int index, bool bright) const
 QColor TerminalWidget::xterm256(int index) const
 {
     if (index < 0) {
-        return m_attr.fg;
+        return QColor::fromRgb(m_attr.fg);
     }
     if (index < 8) {
         return ansiColor(index, false);
@@ -395,7 +397,7 @@ QColor TerminalWidget::xterm256(int index) const
         const int gray = 8 + (index - 232) * 10;
         return QColor(gray, gray, gray);
     }
-    return m_attr.fg;
+    return QColor::fromRgb(m_attr.fg);
 }
 
 int TerminalWidget::cellWidth() const
@@ -1181,10 +1183,10 @@ void TerminalWidget::applySgr(const QVector<int>& params)
         } else if (p == 27) {
             m_attr.inverse = false;
         } else if (p >= 30 && p <= 37) {
-            m_attr.fg = ansiColor(p - 30, m_attr.bold);
+            m_attr.fg = ansiColor(p - 30, m_attr.bold).rgb();
         } else if (p == 38) {
             if (i + 1 < params.size() && params[i + 1] == 5 && i + 2 < params.size()) {
-                m_attr.fg = xterm256(params[i + 2]);
+                m_attr.fg = xterm256(params[i + 2]).rgb();
                 i += 2;
             } else if (i + 1 < params.size() && params[i + 1] == 2) {
                 // 38;2;R;G;B  or  38:2:R:G:B  or  38:2:Cs:R:G:B
@@ -1202,15 +1204,15 @@ void TerminalWidget::applySgr(const QVector<int>& params)
                     b = params[i + 4];
                     i += 4;
                 }
-                m_attr.fg = QColor(qBound(0, r, 255), qBound(0, g, 255), qBound(0, b, 255));
+                m_attr.fg = qRgb(qBound(0, r, 255), qBound(0, g, 255), qBound(0, b, 255));
             }
         } else if (p == 39) {
-            m_attr.fg = m_defaultFg;
+            m_attr.fg = m_defaultFg.rgb();
         } else if (p >= 40 && p <= 47) {
-            m_attr.bg = ansiColor(p - 40, false);
+            m_attr.bg = ansiColor(p - 40, false).rgb();
         } else if (p == 48) {
             if (i + 1 < params.size() && params[i + 1] == 5 && i + 2 < params.size()) {
-                m_attr.bg = xterm256(params[i + 2]);
+                m_attr.bg = xterm256(params[i + 2]).rgb();
                 i += 2;
             } else if (i + 1 < params.size() && params[i + 1] == 2) {
                 int r = 0;
@@ -1227,14 +1229,14 @@ void TerminalWidget::applySgr(const QVector<int>& params)
                     b = params[i + 4];
                     i += 4;
                 }
-                m_attr.bg = QColor(qBound(0, r, 255), qBound(0, g, 255), qBound(0, b, 255));
+                m_attr.bg = qRgb(qBound(0, r, 255), qBound(0, g, 255), qBound(0, b, 255));
             }
         } else if (p == 49) {
-            m_attr.bg = m_defaultBg;
+            m_attr.bg = m_defaultBg.rgb();
         } else if (p >= 90 && p <= 97) {
-            m_attr.fg = ansiColor(p - 90, true);
+            m_attr.fg = ansiColor(p - 90, true).rgb();
         } else if (p >= 100 && p <= 107) {
-            m_attr.bg = ansiColor(p - 100, true);
+            m_attr.bg = ansiColor(p - 100, true).rgb();
         }
     }
 }
@@ -2457,8 +2459,8 @@ void TerminalWidget::paintEvent(QPaintEvent*)
 
         for (int c = 0; c < m_cols; ++c) {
             const Cell& cell = displayCell(r, c);
-            QColor fg = cell.fg;
-            QColor bg = cell.bg;
+            QColor fg = QColor::fromRgb(cell.fg);
+            QColor bg = QColor::fromRgb(cell.bg);
             if (cell.inverse) {
                 qSwap(fg, bg);
             }

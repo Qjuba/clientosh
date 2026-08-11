@@ -116,19 +116,16 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_navGroup->setExclusive(true);
 
     m_navHosts = makeSidebarNav(QStringLiteral(":/icons/hosts.svg"), QStringLiteral("Hosts"), m_sidebar);
-    m_navActive = makeSidebarNav(QStringLiteral(":/icons/terminal.svg"), QStringLiteral("Active"), m_sidebar);
     m_navKeys = makeSidebarNav(QStringLiteral(":/icons/key.svg"), QStringLiteral("Keychain"), m_sidebar);
     m_navLogs = makeSidebarNav(QStringLiteral(":/icons/logs.svg"), QStringLiteral("Logs"), m_sidebar);
     m_navSettings = makeSidebarNav(QStringLiteral(":/icons/settings.svg"), QStringLiteral("Settings"), m_sidebar);
 
     m_navGroup->addButton(m_navHosts, static_cast<int>(NavPage::Hosts));
-    m_navGroup->addButton(m_navActive, static_cast<int>(NavPage::Active));
     m_navGroup->addButton(m_navKeys, static_cast<int>(NavPage::Keychain));
     m_navGroup->addButton(m_navLogs, static_cast<int>(NavPage::Logs));
     m_navGroup->addButton(m_navSettings, static_cast<int>(NavPage::Settings));
 
     sideLay->addWidget(m_navHosts);
-    sideLay->addWidget(m_navActive);
 
     m_activeBadge = new QLabel(QStringLiteral(""), m_sidebar);
     m_activeBadge->setObjectName(QStringLiteral("sideBadge"));
@@ -230,28 +227,6 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_hint->setObjectName(QStringLiteral("dashHint"));
     hostsLay->addWidget(m_hint);
     m_stack->addWidget(m_hostsPage);
-
-    // ---- Active page ----
-    m_activePage = new QWidget;
-    auto* actLay = new QVBoxLayout(m_activePage);
-    actLay->setContentsMargins(16, 12, 16, 10);
-    actLay->setSpacing(8);
-
-    m_activeTable = new QTableWidget(0, 3, m_activePage);
-    styleTable(m_activeTable);
-    m_activeTable->setHorizontalHeaderLabels(
-        {QStringLiteral("session"), QStringLiteral("status"), QStringLiteral("")});
-    m_activeTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_activeTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
-    m_activeTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Fixed);
-    m_activeTable->setColumnWidth(2, 88);
-    actLay->addWidget(m_activeTable, 1);
-
-    m_activeEmpty = new QLabel(QStringLiteral("no live sessions"), m_activePage);
-    m_activeEmpty->setObjectName(QStringLiteral("dashHint"));
-    m_activeEmpty->setAlignment(Qt::AlignCenter);
-    actLay->addWidget(m_activeEmpty);
-    m_stack->addWidget(m_activePage);
 
     // ---- Keychain page ----
     m_keysPage = new QWidget;
@@ -886,12 +861,6 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
             openSavedProfile(item->data(Qt::UserRole).toString());
         }
     });
-    connect(m_activeTable, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
-        if (auto* item = m_activeTable->item(row, 0)) {
-            emit openLiveSession(item->data(Qt::UserRole).toString());
-        }
-    });
-
     connect(m_sessions, &SessionManager::sessionOpened, this, [this](const QString& id) {
         rebuildActiveList();
         if (const auto* live = m_sessions->session(id)) {
@@ -1200,10 +1169,7 @@ void DashboardPage::updateTopBar()
         m_pageTitle->setText(QStringLiteral("Hosts"));
         m_pageSub->setText(QStringLiteral("saved connection profiles"));
         break;
-    case NavPage::Active:
-        m_pageTitle->setText(QStringLiteral("Active"));
-        m_pageSub->setText(QStringLiteral("live ssh sessions"));
-        break;
+    case NavPage::Active: // unreachable (entry removed)
     case NavPage::Keychain:
         m_pageTitle->setText(QStringLiteral("Keychain"));
         m_pageSub->setText(QStringLiteral("stored credentials overview"));
@@ -1228,13 +1194,9 @@ void DashboardPage::setNavPage(NavPage page)
     m_currentNav = page;
     switch (page) {
     case NavPage::Hosts:
+    case NavPage::Active: // deprecated entry; fall back to the Hosts page
         m_stack->setCurrentWidget(m_hostsPage);
         m_navHosts->setChecked(true);
-        break;
-    case NavPage::Active:
-        rebuildActiveList();
-        m_stack->setCurrentWidget(m_activePage);
-        m_navActive->setChecked(true);
         break;
     case NavPage::Keychain:
         rebuildKeychainList();
@@ -1553,80 +1515,16 @@ void DashboardPage::applySavedFilter()
 
 void DashboardPage::rebuildActiveList()
 {
-    m_activeTable->setRowCount(0);
     const QStringList ids = m_sessions->sessionIds();
     const int n = ids.size();
 
+    // With the dedicated "Active" page removed, this only drives the small
+    // "N live" badge shown under the Hosts entry in the sidebar.
     if (n == 0) {
         m_activeBadge->hide();
-        m_activeTable->hide();
-        m_activeEmpty->show();
     } else {
         m_activeBadge->setText(QStringLiteral("%1 live").arg(n));
         m_activeBadge->show();
-        m_activeEmpty->hide();
-        m_activeTable->show();
-    }
-
-    for (const QString& id : ids) {
-        const auto* live = m_sessions->session(id);
-        if (!live) {
-            continue;
-        }
-        const int row = m_activeTable->rowCount();
-        m_activeTable->insertRow(row);
-
-        auto* nameItem = new QTableWidgetItem(live->profile.displayTitle());
-        nameItem->setData(Qt::UserRole, id);
-        nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-
-        QString statusText = live->status;
-        // Prefer type label over raw host-bearing status strings on the dashboard.
-        if (live->connected) {
-            statusText = live->profile.isSftpOnly() ? QStringLiteral("connected · SFTP")
-                                                    : QStringLiteral("connected · SSH");
-        } else if (statusText.contains(QLatin1Char('@')) || statusText.contains(QLatin1Char(':'))) {
-            statusText = live->profile.isSftpOnly() ? QStringLiteral("connecting sftp…")
-                                                    : QStringLiteral("connecting…");
-        }
-        auto* statusItem = new QTableWidgetItem(statusText);
-        statusItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        statusItem->setForeground(live->connected ? QColor(0x7a, 0xb0, 0x7a) : QColor(0x8a, 0x8a, 0x8a));
-
-        m_activeTable->setItem(row, 0, nameItem);
-        m_activeTable->setItem(row, 1, statusItem);
-
-        auto* actions = new QWidget(m_activeTable);
-        actions->setObjectName(QStringLiteral("dashRowActions"));
-        auto* lay = new QHBoxLayout(actions);
-        lay->setContentsMargins(2, 0, 4, 0);
-        lay->setSpacing(1);
-        lay->addStretch(1);
-
-        const bool sftpOnly = live->profile.isSftpOnly();
-        auto* focusBtn = makeRowIcon(sftpOnly ? QStringLiteral(":/icons/folder.svg")
-                                              : QStringLiteral(":/icons/terminal.svg"),
-                                     sftpOnly ? QStringLiteral("open sftp") : QStringLiteral("open"),
-                                     actions);
-        auto* sftpBtn = makeRowIcon(QStringLiteral(":/icons/folder.svg"), QStringLiteral("sftp"), actions);
-        auto* closeBtn = makeRowIcon(QStringLiteral(":/icons/close.svg"), QStringLiteral("close"), actions);
-        sftpBtn->setEnabled(live->connected);
-        sftpBtn->setVisible(!sftpOnly);
-
-        connect(focusBtn, &QToolButton::clicked, this, [this, id, sftpOnly]() {
-            if (sftpOnly) {
-                emit openSftpForSession(id);
-            } else {
-                emit openLiveSession(id);
-            }
-        });
-        connect(sftpBtn, &QToolButton::clicked, this, [this, id]() { emit openSftpForSession(id); });
-        connect(closeBtn, &QToolButton::clicked, this, [this, id]() { emit closeLiveSession(id); });
-
-        lay->addWidget(focusBtn);
-        lay->addWidget(sftpBtn);
-        lay->addWidget(closeBtn);
-        m_activeTable->setCellWidget(row, 2, actions);
     }
 }
 

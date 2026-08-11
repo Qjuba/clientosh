@@ -59,8 +59,8 @@ protected:
 private:
     struct Cell {
         char32_t ch = U' ';
-        QColor fg = QColor(0xc8, 0xc8, 0xc8);
-        QColor bg = QColor(0x1a, 0x1a, 0x1a);
+        QRgb fg = qRgb(0xc8, 0xc8, 0xc8);
+        QRgb bg = qRgb(0x1a, 0x1a, 0x1a);
         bool bold = false;
         bool underline = false;
         bool inverse = false;

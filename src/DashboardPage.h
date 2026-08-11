@@ -47,7 +47,7 @@ signals:
 private:
     enum class NavPage {
         Hosts = 0,
-        Active,
+        Active, // deprecated/unused: live sessions are surfaced via the "N live" badge
         Keychain,
         Logs,
         Settings,
@@ -101,7 +101,6 @@ private:
     QWidget* m_sidebar = nullptr;
     QButtonGroup* m_navGroup = nullptr;
     QToolButton* m_navHosts = nullptr;
-    QToolButton* m_navActive = nullptr;
     QToolButton* m_navKeys = nullptr;
     QToolButton* m_navLogs = nullptr;
     QToolButton* m_navSettings = nullptr;
@@ -115,7 +114,6 @@ private:
 
     QStackedWidget* m_stack = nullptr;
     QWidget* m_hostsPage = nullptr;
-    QWidget* m_activePage = nullptr;
     QWidget* m_keysPage = nullptr;
     QWidget* m_logsPage = nullptr;
     QWidget* m_settingsPage = nullptr;
@@ -123,8 +121,6 @@ private:
 
     QTableWidget* m_savedTable = nullptr;
     QLabel* m_savedEmpty = nullptr;
-    QTableWidget* m_activeTable = nullptr;
-    QLabel* m_activeEmpty = nullptr;
     QTableWidget* m_keysTable = nullptr;
     QLabel* m_keysEmpty = nullptr;
     QPlainTextEdit* m_logsView = nullptr;

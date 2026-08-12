@@ -2,6 +2,7 @@
 
 #include "core/SessionProfile.h"
 #include "core/SftpClient.h"
+#include "core/SftpCrossTransfer.h"
 
 #include <QDateTime>
 #include <QHash>
@@ -19,6 +20,7 @@ class QThread;
 class QPushButton;
 class QDropEvent;
 class QDragEnterEvent;
+class QDragMoveEvent;
 class QMenu;
 class QFileSystemWatcher;
 class QTimer;
@@ -52,6 +54,7 @@ signals:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    bool eventFilter(QObject* watched, QEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragMoveEvent(QDragMoveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
@@ -128,4 +131,20 @@ private:
     QString m_pendingEditRemote;
     QString m_pendingEditLocal;
     QStringList m_pendingEditUploads; // remotes pending an auto-upload completion
+
+    // Drag-out and inter-SFTP transfer via staging.
+    // Intra-process SFTP-to-SFTP drag uses a custom internal MIME rather than
+    // putting host/password into QMimeData (which would leak to other apps).
+    static constexpr const char* kSftpMime = "application/x-clientosh-sftp-internal";
+    QPoint m_dragStartPos;
+    bool m_dragPressValid = false;
+    QThread* m_xferThread = nullptr;
+    SftpCrossTransfer* m_xfer = nullptr;
+    QString m_xferStagingRoot;
+    void startDragWithSelection();
+    void startCrossTransfer(const QVector<SftpCrossEntry>& entries,
+                            SessionProfile sourceProfile,
+                            const QString& destDir);
+    void cleanupXfer();
+    QString dropDirForPos(const QPoint& windowPos) const;
 };

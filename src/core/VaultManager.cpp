@@ -267,3 +267,110 @@ bool VaultManager::removeSecret(const QString& profileId, const QString& field)
     }
     return persistDbvault();
 }
+
+// ---- Stored keys (reusable keyring entries) -----------------------------
+
+namespace {
+// Reserved top-level key in the dbvault object holding the reusable keys map.
+constexpr const char* kStoredKeysNode = "__stored_keys__";
+} // namespace
+
+bool VaultManager::storeStoredKey(const StoredKey& key)
+{
+    if (key.id.isEmpty()) {
+        return false;
+    }
+    if (!ensureDbKey()) {
+        return false;
+    }
+    if (!m_dbLoaded && !readDbvault()) {
+        return false;
+    }
+    QJsonObject keysNode = m_dbvault.value(QLatin1String(kStoredKeysNode)).toObject();
+    QJsonObject entry;
+    entry.insert(QStringLiteral("name"), key.name);
+    entry.insert(QStringLiteral("type"), key.type);
+    entry.insert(QStringLiteral("pem"), QString::fromLatin1(key.pem.toBase64()));
+    entry.insert(QStringLiteral("hasPassphrase"), key.hasPassphrase);
+    keysNode.insert(key.id, entry);
+    m_dbvault.insert(QLatin1String(kStoredKeysNode), keysNode);
+    m_dbLoaded = true;
+    return persistDbvault();
+}
+
+bool VaultManager::retrieveStoredKey(const QString& id, StoredKey& keyOut)
+{
+    if (id.isEmpty()) {
+        return false;
+    }
+    if (!ensureDbKey()) {
+        return false;
+    }
+    if (!m_dbLoaded && !readDbvault()) {
+        return false;
+    }
+    const QJsonObject keysNode = m_dbvault.value(QLatin1String(kStoredKeysNode)).toObject();
+    const QJsonValue v = keysNode.value(id);
+    if (!v.isObject()) {
+        return false;
+    }
+    const QJsonObject entry = v.toObject();
+    keyOut.id = id;
+    keyOut.name = entry.value(QStringLiteral("name")).toString();
+    keyOut.type = entry.value(QStringLiteral("type")).toString();
+    keyOut.hasPassphrase = entry.value(QStringLiteral("hasPassphrase")).toBool(false);
+    keyOut.pem = QByteArray::fromBase64(entry.value(QStringLiteral("pem")).toString().toLatin1());
+    if (keyOut.pem.isEmpty()) {
+        return false;
+    }
+    return true;
+}
+
+QVector<StoredKey> VaultManager::listStoredKeys()
+{
+    QVector<StoredKey> out;
+    if (!ensureDbKey()) {
+        return out;
+    }
+    if (!m_dbLoaded && !readDbvault()) {
+        return out;
+    }
+    const QJsonObject keysNode = m_dbvault.value(QLatin1String(kStoredKeysNode)).toObject();
+    const QStringList ids = keysNode.keys();
+    out.reserve(ids.size());
+    for (const QString& id : ids) {
+        const QJsonObject entry = keysNode.value(id).toObject();
+        StoredKey k;
+        k.id = id;
+        k.name = entry.value(QStringLiteral("name")).toString();
+        k.type = entry.value(QStringLiteral("type")).toString();
+        k.hasPassphrase = entry.value(QStringLiteral("hasPassphrase")).toBool(false);
+        out.push_back(k);
+    }
+    return out;
+}
+
+bool VaultManager::removeStoredKey(const QString& id)
+{
+    if (id.isEmpty()) {
+        return false;
+    }
+    if (!m_dbLoaded && !readDbvault()) {
+        // Nothing loaded; treat as success since the key cannot be present.
+        return true;
+    }
+    if (!m_dbvault.contains(QLatin1String(kStoredKeysNode))) {
+        return true;
+    }
+    QJsonObject keysNode = m_dbvault.value(QLatin1String(kStoredKeysNode)).toObject();
+    if (!keysNode.contains(id)) {
+        return true;
+    }
+    keysNode.remove(id);
+    if (keysNode.isEmpty()) {
+        m_dbvault.remove(QLatin1String(kStoredKeysNode));
+    } else {
+        m_dbvault.insert(QLatin1String(kStoredKeysNode), keysNode);
+    }
+    return persistDbvault();
+}

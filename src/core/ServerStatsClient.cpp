@@ -1,5 +1,6 @@
 #include "ServerStatsClient.h"
 #include "AppSettings.h"
+#include "PrivateKeyLoader.h"
 
 #include <libssh/libssh.h>
 
@@ -60,16 +61,14 @@ bool ServerStatsClient::authenticate(const SessionProfile& profile, QString* err
 {
     auto* session = static_cast<ssh_session>(m_session);
     const QString keyPath = profile.privateKeyPath.trimmed();
+    const QString keyId = profile.privateKeyId.trimmed();
 
-    if (!keyPath.isEmpty()) {
+    if (!keyId.isEmpty() || !keyPath.isEmpty()) {
         ssh_key privkey = nullptr;
-        const QByteArray path = keyPath.toUtf8();
-        const QByteArray passphrase = profile.keyPassphrase.toUtf8();
-        const char* passPtr = passphrase.isEmpty() ? nullptr : passphrase.constData();
-        if (ssh_pki_import_privkey_file(path.constData(), passPtr, nullptr, nullptr, &privkey)
-            != SSH_OK) {
+        QString loadErr;
+        if (!loadProfilePrivateKey(profile, &privkey, &loadErr)) {
             if (errorOut) {
-                *errorOut = QStringLiteral("failed to load private key");
+                *errorOut = loadErr.isEmpty() ? QStringLiteral("failed to load private key") : loadErr;
             }
             return false;
         }
@@ -87,7 +86,7 @@ bool ServerStatsClient::authenticate(const SessionProfile& profile, QString* err
         }
     }
 
-    if (profile.password.isEmpty() && keyPath.isEmpty()) {
+    if (profile.password.isEmpty() && keyId.isEmpty() && keyPath.isEmpty()) {
         if (errorOut) {
             *errorOut = QStringLiteral("no credentials for stats probe");
         }

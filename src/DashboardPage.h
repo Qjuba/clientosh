@@ -88,6 +88,11 @@ private:
     void resetShortcutsToDefaults();
     void setNavPage(NavPage page);
     void browsePrivateKey();
+    void reloadKeyringCombo();
+    void rebuildStoredKeysFromForm();
+    void importKeyIntoKeyring();
+    void removeSelectedKeyringKey();
+    void onKeyringSelectionChanged(int index);
     void fillProfileFromForm(SessionProfile* profile) const;
     int profileIndexById(const QString& id) const;
     QToolButton* makeNavButton(const QString& iconPath, const QString& text, QWidget* parent);
@@ -134,6 +139,9 @@ private:
     QLineEdit* m_passEdit = nullptr;
     QCheckBox* m_savePass = nullptr;
     QLineEdit* m_keyPathEdit = nullptr;
+    QComboBox* m_keyringCombo = nullptr;
+    QPushButton* m_importKeyBtn = nullptr;
+    QPushButton* m_removeKeyBtn = nullptr;
     QLineEdit* m_keyPassEdit = nullptr;
     QCheckBox* m_saveKeyPass = nullptr;
     QPushButton* m_browseKeyBtn = nullptr;

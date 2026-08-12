@@ -79,6 +79,7 @@ void SessionManager::connectSession(const QString& id, int cols, int rows)
                          live->profile.user,
                          live->profile.password,
                          live->profile.privateKeyPath,
+                         live->profile.privateKeyId,
                          live->profile.keyPassphrase);
 }
 

@@ -12,9 +12,12 @@
 #include <QComboBox>
 #include <QDateTime>
 #include <QDir>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QInputDialog>
+#include <QMessageBox>
 #include <QFrame>
 #include <QHeaderView>
 #include <QHBoxLayout>
@@ -792,6 +795,22 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     keyLay->addWidget(m_keyPathEdit, 1);
     keyLay->addWidget(m_browseKeyBtn);
 
+    // Keyring: choose a pre-saved key, or import a new one into the keyring.
+    m_keyringCombo = new QComboBox(m_formPage);
+    m_importKeyBtn = new QPushButton(QStringLiteral("import…"), m_formPage);
+    m_importKeyBtn->setObjectName(QStringLiteral("dashButton"));
+    m_importKeyBtn->setFocusPolicy(Qt::NoFocus);
+    m_removeKeyBtn = new QPushButton(QStringLiteral("remove"), m_formPage);
+    m_removeKeyBtn->setObjectName(QStringLiteral("dashButton"));
+    m_removeKeyBtn->setFocusPolicy(Qt::NoFocus);
+    auto* keyringRow = new QWidget(m_formPage);
+    auto* keyringLay = new QHBoxLayout(keyringRow);
+    keyringLay->setContentsMargins(0, 0, 0, 0);
+    keyringLay->setSpacing(6);
+    keyringLay->addWidget(m_keyringCombo, 1);
+    keyringLay->addWidget(m_importKeyBtn);
+    keyringLay->addWidget(m_removeKeyBtn);
+
     m_keyPassEdit = new QLineEdit(m_formPage);
     m_keyPassEdit->setPlaceholderText(QStringLiteral("key passphrase (if encrypted)"));
     m_keyPassEdit->setEchoMode(QLineEdit::Password);
@@ -810,7 +829,8 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     addLabeled(QStringLiteral("user"), m_userEdit);
     addLabeled(QStringLiteral("password"), m_passEdit);
     formLay->addWidget(m_savePass);
-    addLabeled(QStringLiteral("private key"), keyRow);
+    addLabeled(QStringLiteral("key from keyring"), keyringRow);
+    addLabeled(QStringLiteral("private key file"), keyRow);
     addLabeled(QStringLiteral("key passphrase"), m_keyPassEdit);
     formLay->addWidget(m_saveKeyPass);
     formLay->addWidget(authHint);
@@ -847,6 +867,10 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     connect(saveBtn, &QPushButton::clicked, this, &DashboardPage::saveCurrentFormAsProfile);
     connect(connectBtn, &QPushButton::clicked, this, &DashboardPage::connectFromForm);
     connect(m_browseKeyBtn, &QPushButton::clicked, this, &DashboardPage::browsePrivateKey);
+    connect(m_importKeyBtn, &QPushButton::clicked, this, &DashboardPage::importKeyIntoKeyring);
+    connect(m_removeKeyBtn, &QPushButton::clicked, this, &DashboardPage::removeSelectedKeyringKey);
+    connect(m_keyringCombo, &QComboBox::currentIndexChanged, this, &DashboardPage::onKeyringSelectionChanged);
+    reloadKeyringCombo();
     connect(setSave, &QPushButton::clicked, this, &DashboardPage::saveSettingsUi);
     connect(m_settingsNav, &QListWidget::currentRowChanged, this, &DashboardPage::setSettingsCategory);
     connect(m_settingsAnimations, &QCheckBox::toggled, this, [](bool on) {
@@ -1280,6 +1304,9 @@ void DashboardPage::clearForm()
     m_passEdit->clear();
     m_savePass->setChecked(AppSettings::savePasswordDefault());
     m_keyPathEdit->clear();
+    reloadKeyringCombo();
+    m_keyringCombo->setCurrentIndex(0); // "none"
+    onKeyringSelectionChanged(m_keyringCombo->currentIndex());
     m_keyPassEdit->clear();
     m_saveKeyPass->setChecked(false);
 }
@@ -1295,6 +1322,18 @@ void DashboardPage::loadProfileIntoForm(const SessionProfile& profile)
     m_passEdit->setText(profile.password);
     m_savePass->setChecked(profile.savePassword);
     m_keyPathEdit->setText(profile.privateKeyPath);
+    reloadKeyringCombo();
+    if (!profile.privateKeyId.trimmed().isEmpty()) {
+        // A pre-saved keyring key takes precedence over the file path.
+        const int idx = m_keyringCombo->findData(profile.privateKeyId);
+        m_keyringCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+        if (idx >= 0) {
+            m_keyPathEdit->clear();
+        }
+    } else {
+        m_keyringCombo->setCurrentIndex(0);
+    }
+    onKeyringSelectionChanged(m_keyringCombo->currentIndex());
     m_keyPassEdit->setText(profile.keyPassphrase);
     m_saveKeyPass->setChecked(profile.saveKeyPassphrase);
 }
@@ -1312,7 +1351,130 @@ void DashboardPage::browsePrivateKey()
         QStringLiteral("Private keys (id_rsa id_ed25519 id_ecdsa id_dsa *);;All files (*)"));
     if (!path.isEmpty()) {
         m_keyPathEdit->setText(QDir::toNativeSeparators(path));
+        // Manually choosing a file means "this path" is the chosen key — drop
+        // any keyring selection so the path is used.
+        m_keyringCombo->setCurrentIndex(0);
     }
+}
+
+void DashboardPage::reloadKeyringCombo()
+{
+    if (!m_keyringCombo) {
+        return;
+    }
+    const QString prevId = m_keyringCombo->currentData().toString();
+    m_keyringCombo->blockSignals(true);
+    m_keyringCombo->clear();
+    m_keyringCombo->addItem(QStringLiteral("— none (use file path) —"), QString());
+    VaultManager vault;
+    const QVector<StoredKey> keys = vault.listStoredKeys();
+    for (const StoredKey& k : keys) {
+        QString label = k.name.trimmed().isEmpty() ? QStringLiteral("(unnamed)") : k.name;
+        if (!k.type.trimmed().isEmpty()) {
+            label += QStringLiteral("  ·  %1").arg(k.type);
+        }
+        if (k.hasPassphrase) {
+            label += QStringLiteral("  ·  passphrase");
+        }
+        m_keyringCombo->addItem(label, k.id);
+    }
+    const int idx = m_keyringCombo->findData(prevId);
+    m_keyringCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+    m_keyringCombo->blockSignals(false);
+}
+
+void DashboardPage::onKeyringSelectionChanged(int index)
+{
+    const bool hasKeyringKey = m_keyringCombo->currentData().toString().length() > 0;
+    m_removeKeyBtn->setEnabled(hasKeyringKey);
+    if (hasKeyringKey) {
+        // Keyring key takes precedence; a selected path would be ignored/confusing.
+        m_keyPathEdit->clear();
+    }
+}
+
+void DashboardPage::importKeyIntoKeyring()
+{
+    const QString startDir = m_keyPathEdit->text().trimmed().isEmpty()
+        ? QDir::homePath() + QStringLiteral("/.ssh")
+        : QFileInfo(m_keyPathEdit->text()).absolutePath();
+    const QString path = QFileDialog::getOpenFileName(
+        this,
+        QStringLiteral("Import private key into keyring"),
+        startDir,
+        QStringLiteral("Private keys (id_rsa id_ed25519 id_ecdsa id_dsa *);;All files (*)"));
+    if (path.isEmpty()) {
+        return;
+    }
+
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        m_hint->setText(QStringLiteral("cannot read key file: %1").arg(path));
+        return;
+    }
+    const QByteArray pem = f.readAll();
+    const QString baseName = QFileInfo(path).fileName();
+
+    bool ok = false;
+    const QString displayName = QInputDialog::getText(
+        this,
+        QStringLiteral("Keyring key name"),
+        QStringLiteral("Give this key a memorable name:"),
+        QLineEdit::Normal,
+        baseName,
+        &ok);
+    if (!ok) {
+        return;
+    }
+
+    StoredKey key;
+    key.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    key.name = displayName.trimmed().isEmpty() ? baseName : displayName.trimmed();
+    // Detect type from the PEM header so we can label it in the picker/keychain.
+    if (pem.contains(QByteArrayLiteral("OPENSSH PRIVATE KEY"))) {
+        key.type = QStringLiteral("openssh");
+    } else if (pem.contains(QByteArrayLiteral("EC PRIVATE KEY"))) {
+        key.type = QStringLiteral("ec");
+    } else {
+        key.type = QStringLiteral("pem");
+    }
+
+    VaultManager vault;
+    if (!vault.storeStoredKey(key)) {
+        m_hint->setText(QStringLiteral("failed to store key in the keyring"));
+        return;
+    }
+    reloadKeyringCombo();
+    const int idx = m_keyringCombo->findData(key.id);
+    if (idx >= 0) {
+        m_keyringCombo->setCurrentIndex(idx);
+    }
+    onKeyringSelectionChanged(m_keyringCombo->currentIndex());
+    m_hint->setText(QStringLiteral("key '%1' saved to keyring").arg(key.name));
+    appendLog(QStringLiteral("imported key '%1' into keyring").arg(key.name));
+}
+
+void DashboardPage::removeSelectedKeyringKey()
+{
+    const QString id = m_keyringCombo->currentData().toString();
+    if (id.isEmpty()) {
+        return;
+    }
+    const QString label = m_keyringCombo->currentText();
+    const auto answer = QMessageBox::question(
+        this,
+        QStringLiteral("Remove keyring key"),
+        QStringLiteral("Remove \"%1\" from the keyring?").arg(label));
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+    VaultManager vault;
+    vault.removeStoredKey(id);
+    reloadKeyringCombo();
+    m_keyringCombo->setCurrentIndex(0);
+    onKeyringSelectionChanged(m_keyringCombo->currentIndex());
+    m_hint->setText(QStringLiteral("key removed from keyring"));
+    appendLog(QStringLiteral("removed keyring key '%1'").arg(label));
 }
 
 void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
@@ -1327,7 +1489,14 @@ void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
     profile->user = m_userEdit->text().trimmed();
     profile->password = m_passEdit->text();
     profile->savePassword = m_savePass->isChecked();
-    profile->privateKeyPath = m_keyPathEdit->text().trimmed();
+    const QString keyringId = m_keyringCombo->currentData().toString();
+    if (!keyringId.isEmpty()) {
+        profile->privateKeyId = keyringId;
+        profile->privateKeyPath.clear();
+    } else {
+        profile->privateKeyId.clear();
+        profile->privateKeyPath = m_keyPathEdit->text().trimmed();
+    }
     profile->keyPassphrase = m_keyPassEdit->text();
     profile->saveKeyPassphrase = m_saveKeyPass->isChecked();
     if (!profile->savePassword) {
@@ -1544,9 +1713,20 @@ void DashboardPage::rebuildKeychainList()
 
         QString keyText = QStringLiteral("—");
         if (hasKey) {
-            keyText = QFileInfo(p.privateKeyPath).fileName();
-            if (keyText.isEmpty()) {
-                keyText = p.privateKeyPath;
+            if (!p.privateKeyId.trimmed().isEmpty()) {
+                VaultManager vault;
+                StoredKey stored;
+                if (vault.retrieveStoredKey(p.privateKeyId, stored)) {
+                    keyText = QStringLiteral("%1 (keyring)").arg(
+                        stored.name.trimmed().isEmpty() ? QStringLiteral("stored key") : stored.name);
+                } else {
+                    keyText = QStringLiteral("stored key (missing)");
+                }
+            } else {
+                keyText = QFileInfo(p.privateKeyPath).fileName();
+                if (keyText.isEmpty()) {
+                    keyText = p.privateKeyPath;
+                }
             }
         }
         auto* keyItem = new QTableWidgetItem(keyText);
@@ -1576,7 +1756,9 @@ void DashboardPage::saveCurrentFormAsProfile()
         setNavPage(NavPage::Hosts);
         return;
     }
-    if (m_passEdit->text().isEmpty() && m_keyPathEdit->text().trimmed().isEmpty()) {
+    const bool hasKey = !m_keyPathEdit->text().trimmed().isEmpty()
+        || !m_keyringCombo->currentData().toString().isEmpty();
+    if (m_passEdit->text().isEmpty() && !hasKey) {
         m_hint->setText(QStringLiteral("provide a password or a private key"));
         return;
     }
@@ -1640,7 +1822,9 @@ void DashboardPage::connectFromForm()
     if (host.isEmpty() || user.isEmpty()) {
         return;
     }
-    if (m_passEdit->text().isEmpty() && m_keyPathEdit->text().trimmed().isEmpty()) {
+    const bool hasKey = !m_keyPathEdit->text().trimmed().isEmpty()
+        || !m_keyringCombo->currentData().toString().isEmpty();
+    if (m_passEdit->text().isEmpty() && !hasKey) {
         m_hint->setText(QStringLiteral("provide a password or a private key"));
         return;
     }
@@ -1649,7 +1833,6 @@ void DashboardPage::connectFromForm()
     fillProfileFromForm(&p);
     p.password = m_passEdit->text();
     p.keyPassphrase = m_keyPassEdit->text();
-    p.privateKeyPath = m_keyPathEdit->text().trimmed();
 
     if (p.password.isEmpty() && !m_editingId.isEmpty()) {
         for (const SessionProfile& existing : m_profiles) {

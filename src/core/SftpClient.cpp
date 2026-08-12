@@ -1,6 +1,7 @@
 #include "SftpClient.h"
 
 #include "core/AppSettings.h"
+#include "core/PrivateKeyLoader.h"
 
 #include <libssh/libssh.h>
 #include <libssh/sftp.h>
@@ -264,21 +265,19 @@ bool SftpClient::authenticate(const SessionProfile& profile, QString* errorOut)
 {
     auto* session = static_cast<ssh_session>(m_session);
     const QString keyPath = profile.privateKeyPath.trimmed();
+    const QString keyId = profile.privateKeyId.trimmed();
 
-    if (!keyPath.isEmpty()) {
-        vlog(QStringLiteral("authenticate: trying private key %1").arg(keyPath));
+    if (!keyId.isEmpty() || !keyPath.isEmpty()) {
+        const QString keyDesc = !keyId.isEmpty() ? keyId : keyPath;
+        vlog(QStringLiteral("authenticate: trying private key %1").arg(keyDesc));
         emit statusChanged(QStringLiteral("authenticating with private key..."));
         ssh_key privkey = nullptr;
-        const QByteArray pathUtf8 = keyPath.toUtf8();
-        const QByteArray passUtf8 = profile.keyPassphrase.toUtf8();
-        const char* passPtr = profile.keyPassphrase.isEmpty() ? nullptr : passUtf8.constData();
-
-        if (ssh_pki_import_privkey_file(pathUtf8.constData(), passPtr, nullptr, nullptr, &privkey) != SSH_OK
-            || !privkey) {
+        QString loadErr;
+        if (!loadProfilePrivateKey(profile, &privkey, &loadErr) || !privkey) {
             const QString detail = QString::fromUtf8(ssh_get_error(session));
             vlog(QStringLiteral("authenticate: failed to load private key: %1").arg(detail));
             if (errorOut) {
-                *errorOut = QStringLiteral("failed to load private key '%1': %2").arg(keyPath, detail);
+                *errorOut = QStringLiteral("%1: %2").arg(loadErr, detail);
             }
             if (privkey) {
                 ssh_key_free(privkey);
@@ -296,7 +295,7 @@ bool SftpClient::authenticate(const SessionProfile& profile, QString* errorOut)
         vlog(QStringLiteral("authenticate: public-key auth failed rc=%1 err=%2").arg(rc).arg(pubErr));
         if (profile.password.isEmpty()) {
             if (errorOut) {
-                *errorOut = QStringLiteral("public-key auth failed for '%1': %2").arg(keyPath, pubErr);
+                *errorOut = QStringLiteral("public-key auth failed for '%1': %2").arg(keyDesc, pubErr);
             }
             return false;
         }

@@ -2,11 +2,13 @@
 #include "core/AppSettings.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QColor>
 #include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDrag>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
@@ -16,11 +18,15 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QInputDialog>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QMouseEvent>
 #include <QProgressBar>
 #include <QSettings>
 #include <QStandardPaths>
@@ -29,6 +35,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QUrl>
+#include <QUuid>
 #include <QVBoxLayout>
 
 namespace {
@@ -244,10 +251,12 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
     applyAppSettings();
     syncDotfilesToggle();
 
-    // Accept file drops from the OS anywhere over the SFTP view.
+    // Accept file drops from the OS and from another SFTP pane anywhere over the view.
     setAcceptDrops(true);
     m_table->setAcceptDrops(true);
     m_table->viewport()->setAcceptDrops(true);
+    m_table->viewport()->installEventFilter(this);
+    m_table->installEventFilter(this);
 
     m_thread = new QThread(this);
     m_client = new SftpClient;
@@ -420,6 +429,7 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
 
 SftpWindow::~SftpWindow()
 {
+    cleanupXfer();
     if (m_syncTimer) {
         m_syncTimer->stop();
     }
@@ -734,7 +744,12 @@ void SftpWindow::uploadLocalPathsTo(const QStringList& paths, const QString& rem
 
 void SftpWindow::cancelTransfers()
 {
-    if (!m_busy && !m_transferInFlight) {
+    if (m_xfer) {
+        QMetaObject::invokeMethod(m_xfer, "cancel", Qt::QueuedConnection);
+        m_status->setText(QStringLiteral("cancelling…"));
+        m_cancelBtn->hide();
+    }
+    if (!m_busy && !m_transferInFlight && !m_xfer) {
         m_cancelBtn->hide();
         return;
     }
@@ -1070,9 +1085,204 @@ void SftpWindow::stopWatchingEditedFile(const QString& remotePath)
     }
 }
 
+bool SftpWindow::eventFilter(QObject* watched, QEvent* event)
+{
+    const bool isTableViewport = (watched == m_table->viewport());
+    const bool isTable = (watched == m_table);
+    if (!isTableViewport && !isTable) {
+        return QWidget::eventFilter(watched, event);
+    }
+    if (event->type() == QEvent::MouseButtonPress) {
+        auto* me = static_cast<QMouseEvent*>(event);
+        if (me->button() == Qt::LeftButton) {
+            m_dragStartPos = me->pos();
+            if (isTableViewport) {
+                // Record only if press is on a valid selectable row.
+                if (QTableWidgetItem* it = m_table->itemAt(me->pos())) {
+                    if (!it->data(Qt::UserRole + 2).toBool()) {
+                        m_dragPressValid = true;
+                    } else {
+                        m_dragPressValid = false;
+                    }
+                } else {
+                    m_dragPressValid = false;
+                }
+            } else {
+                m_dragPressValid = true;
+            }
+        }
+    } else if (event->type() == QEvent::MouseMove) {
+        if (m_dragPressValid && !m_busy && !m_xfer) {
+            auto* me = static_cast<QMouseEvent*>(event);
+            if ((me->buttons() & Qt::LeftButton)
+                && (me->pos() - m_dragStartPos).manhattanLength() >= QApplication::startDragDistance()) {
+                const auto rows = m_table->selectionModel()->selectedRows();
+                if (!rows.isEmpty()) {
+                    startDragWithSelection();
+                    m_dragPressValid = false;
+                }
+            }
+        }
+    } else if (event->type() == QEvent::MouseButtonRelease) {
+        m_dragPressValid = false;
+    }
+    return QWidget::eventFilter(watched, event);
+}
+
+void SftpWindow::startDragWithSelection()
+{
+    const auto rows = m_table->selectionModel()->selectedRows();
+    if (rows.isEmpty()) {
+        return;
+    }
+    QJsonArray arr;
+    for (const QModelIndex& idx : rows) {
+        auto* item = m_table->item(idx.row(), 0);
+        if (!item) {
+            continue;
+        }
+        if (item->data(Qt::UserRole + 2).toBool()) {
+            continue; // parent ".."
+        }
+        const QString name = item->text();
+        QJsonObject o;
+        o.insert(QStringLiteral("name"), name);
+        o.insert(QStringLiteral("remote"), joinRemote(name));
+        o.insert(QStringLiteral("isDir"), item->data(Qt::UserRole).toBool());
+        arr.append(o);
+    }
+    if (arr.isEmpty()) {
+        return;
+    }
+    QJsonObject payload;
+    payload.insert(QStringLiteral("cwd"), m_cwd);
+    payload.insert(QStringLiteral("entries"), arr);
+    // Do not embed credentials — they are resolved on drop from the source
+    // SftpWindow's in-memory SessionProfile. Keep only a lightweight marker so
+    // the drop target can look up the source pane by pointer stored in drag.
+    const QByteArray data = QJsonDocument(payload).toJson(QJsonDocument::Compact);
+    auto* mime = new QMimeData;
+    mime->setData(QString::fromLatin1(kSftpMime), data);
+    // Attach the source pane as QObject pointer in mime via property — not via
+    // serialized bytes, so it never leaves this process.
+    mime->setProperty("clientoshSourcePane", QVariant::fromValue<QObject*>(const_cast<SftpWindow*>(this)));
+
+    auto* drag = new QDrag(this);
+    drag->setMimeData(mime);
+    drag->setHotSpot(QPoint(8, 8));
+    drag->exec(Qt::CopyAction, Qt::CopyAction);
+}
+
+QString SftpWindow::dropDirForPos(const QPoint& windowPos) const
+{
+    QWidget* vp = m_table->viewport();
+    const QPoint vpPos = vp->mapFrom(const_cast<SftpWindow*>(this), windowPos);
+    if (vp->rect().contains(vpPos)) {
+        if (QTableWidgetItem* it = m_table->itemAt(vpPos)) {
+            if (it->data(Qt::UserRole).toBool() && !it->data(Qt::UserRole + 2).toBool()) {
+                return joinRemote(it->text());
+            }
+        }
+    }
+    return m_cwd;
+}
+
+void SftpWindow::startCrossTransfer(const QVector<SftpCrossEntry>& entries,
+                                    SessionProfile sourceProfile,
+                                    const QString& destDir)
+{
+    if (entries.isEmpty() || m_xfer) {
+        return;
+    }
+    cleanupXfer();
+    m_xferStagingRoot = QStandardPaths::writableLocation(QStandardPaths::TempLocation)
+        + QStringLiteral("/clientosh-xfer-") + QUuid::createUuid().toString(QUuid::WithoutBraces);
+
+    m_xferThread = new QThread(this);
+    m_xfer = new SftpCrossTransfer;
+    m_xfer->moveToThread(m_xferThread);
+    connect(m_xferThread, &QThread::finished, m_xfer, &QObject::deleteLater);
+
+    connect(m_xfer, &SftpCrossTransfer::progress, this,
+            [this](const QString& label, qint64 done, qint64 total) {
+                m_progress->show();
+                m_cancelBtn->show();
+                if (total > 0) {
+                    m_progress->setRange(0, 100);
+                    m_progress->setValue(static_cast<int>((done * 100) / total));
+                    m_progress->setFormat(QStringLiteral("%1 · %p%").arg(label));
+                } else {
+                    m_progress->setRange(0, 0);
+                    m_progress->setFormat(label);
+                }
+            });
+    connect(m_xfer, &SftpCrossTransfer::fileStarted, this, [this](const QString& n) {
+        m_status->setText(QStringLiteral("transferring %1…").arg(n));
+    });
+    connect(m_xfer, &SftpCrossTransfer::debugLog, this, [this](const QString& line) {
+        emit debugLog(line);
+        m_status->setText(line);
+    });
+    connect(m_xfer, &SftpCrossTransfer::finished, this, [this](bool ok, const QString& msg) {
+        // Tear down worker before touching UI that may start another xfer.
+        cleanupXfer();
+        m_progress->hide();
+        m_cancelBtn->hide();
+        m_progress->setRange(0, 100);
+        m_progress->setValue(0);
+        setBusy(false);
+        m_status->setText(msg);
+        if (!ok) {
+            QMessageBox::warning(this, QStringLiteral("transfer"), msg);
+        }
+        refresh();
+    });
+
+    setBusy(true);
+    m_progress->show();
+    m_cancelBtn->show();
+    m_progress->setRange(0, 0);
+    m_progress->setFormat(QStringLiteral("starting…"));
+    m_status->setText(QStringLiteral("starting server-to-server transfer…"));
+
+    m_xferThread->start();
+    // Capture by value — sourceProfile/destDir/entries live on the caller's stack.
+    const SessionProfile src = sourceProfile;
+    const SessionProfile dst = m_profile;
+    const QString staging = m_xferStagingRoot;
+    const QVector<SftpCrossEntry> ents = entries;
+    QMetaObject::invokeMethod(
+        m_xfer, "startTransfer", Qt::QueuedConnection, Q_ARG(SessionProfile, src),
+        Q_ARG(QVector<SftpCrossEntry>, ents), Q_ARG(SessionProfile, dst), Q_ARG(QString, destDir),
+        Q_ARG(QString, staging));
+}
+
+void SftpWindow::cleanupXfer()
+{
+    if (m_xfer) {
+        // Do not delete directly — it lives on m_xferThread; request cancel then quit.
+        QMetaObject::invokeMethod(m_xfer, "cancel", Qt::QueuedConnection);
+    }
+    if (m_xferThread) {
+        m_xferThread->quit();
+        m_xferThread->wait(3000);
+        m_xferThread->deleteLater();
+        m_xferThread = nullptr;
+        m_xfer = nullptr;
+    }
+    if (!m_xferStagingRoot.isEmpty()) {
+        QDir d(m_xferStagingRoot);
+        if (d.exists()) {
+            d.removeRecursively();
+        }
+        m_xferStagingRoot.clear();
+    }
+}
+
 void SftpWindow::dragEnterEvent(QDragEnterEvent* event)
 {
-    if (event->mimeData()->hasUrls()) {
+    const QMimeData* md = event->mimeData();
+    if (md->hasFormat(QString::fromLatin1(kSftpMime)) || md->hasUrls()) {
         event->acceptProposedAction();
         return;
     }
@@ -1081,7 +1291,8 @@ void SftpWindow::dragEnterEvent(QDragEnterEvent* event)
 
 void SftpWindow::dragMoveEvent(QDragMoveEvent* event)
 {
-    if (event->mimeData()->hasUrls()) {
+    const QMimeData* md = event->mimeData();
+    if (md->hasFormat(QString::fromLatin1(kSftpMime)) || md->hasUrls()) {
         event->acceptProposedAction();
         return;
     }
@@ -1090,29 +1301,79 @@ void SftpWindow::dragMoveEvent(QDragMoveEvent* event)
 
 void SftpWindow::dropEvent(QDropEvent* event)
 {
-    if (m_busy) {
+    if (m_busy || m_xfer) {
         event->ignore();
         return;
     }
-    if (!event->mimeData()->hasUrls()) {
+    const QMimeData* md = event->mimeData();
+    const QString dropDir = dropDirForPos(event->position().toPoint());
+
+    if (md->hasFormat(QString::fromLatin1(kSftpMime))) {
+        // Credentials are NOT serialized in QMimeData; we stored the source
+        // pane pointer as a mime property (internal only, never leaves process).
+        QObject* srcObj = md->property("clientoshSourcePane").value<QObject*>();
+        auto* srcPane = qobject_cast<SftpWindow*>(srcObj);
+        if (!srcPane) {
+            // Fallback: if property was lost (e.g. cross-app attempt), reject.
+            event->ignore();
+            return;
+        }
+        if (srcPane == this) {
+            // Self-drop is a move within the same remote FS — ignore; user
+            // can use rename instead. Prevents pointless download+upload.
+            event->ignore();
+            return;
+        }
+        const SessionProfile src = srcPane->profile();
+        const QByteArray raw = md->data(QString::fromLatin1(kSftpMime));
+        const QJsonDocument doc = QJsonDocument::fromJson(raw);
+        if (!doc.isObject()) {
+            event->ignore();
+            return;
+        }
+        const QJsonObject obj = doc.object();
+        const QJsonArray arr = obj.value(QStringLiteral("entries")).toArray();
+        if (arr.isEmpty()) {
+            event->ignore();
+            return;
+        }
+
+        QVector<SftpCrossEntry> entries;
+        entries.reserve(arr.size());
+        for (const QJsonValue& v : arr) {
+            const QJsonObject o = v.toObject();
+            SftpCrossEntry e;
+            e.remotePath = o.value(QStringLiteral("remote")).toString();
+            e.name = o.value(QStringLiteral("name")).toString();
+            e.isDir = o.value(QStringLiteral("isDir")).toBool(false);
+            if (e.remotePath.isEmpty() || e.name.isEmpty()) {
+                continue;
+            }
+            if (e.name == QStringLiteral("..")) {
+                continue;
+            }
+            entries.push_back(e);
+        }
+        if (entries.isEmpty()) {
+            event->ignore();
+            return;
+        }
+        if (src.host.trimmed().isEmpty() || src.user.trimmed().isEmpty()) {
+            event->ignore();
+            return;
+        }
+        startCrossTransfer(entries, src, dropDir);
+        event->acceptProposedAction();
+        return;
+    }
+
+    if (!md->hasUrls()) {
         QWidget::dropEvent(event);
         return;
     }
 
-    QString dropRemoteDir = m_cwd;
-    const QPoint pos = event->position().toPoint();
-    QWidget* vp = m_table->viewport();
-    const QPoint vpPos = vp->mapFrom(this, pos);
-    if (vp->rect().contains(vpPos)) {
-        if (QTableWidgetItem* it = m_table->itemAt(vpPos)) {
-            if (it->data(Qt::UserRole).toBool() && !it->data(Qt::UserRole + 2).toBool()) {
-                dropRemoteDir = joinRemote(it->text());
-            }
-        }
-    }
-
     QStringList locals;
-    for (const QUrl& url : event->mimeData()->urls()) {
+    for (const QUrl& url : md->urls()) {
         if (url.isLocalFile()) {
             locals.push_back(url.toLocalFile());
         }
@@ -1120,6 +1381,6 @@ void SftpWindow::dropEvent(QDropEvent* event)
     if (locals.isEmpty()) {
         return;
     }
-    uploadLocalPathsTo(locals, dropRemoteDir);
+    uploadLocalPathsTo(locals, dropDir);
     event->acceptProposedAction();
 }

@@ -23,7 +23,8 @@ While the UI is intentionally minimal and opinionated, the underlying SSH/SFTP s
 
 - **Split-pane terminal workspace** — drag a session tab onto another tab to preview its viewport, then drop on a Left / Right / Top / Bottom zone to split. Terminal and SFTP panes share one window.
 - **Session management** — save named profiles (host, port, user, add optional password / SSH key), switch between SSH and SFTP-only modes, and jump back in from the dashboard.
-- **Authentication** — password or private-key (with optional passphrase). Saved credentials stay local via `QSettings`.
+- **Keyring** — store SSH private keys (and passwords/passphrases) in the OS keyring (Windows Credential Manager / Keychain / Secret Service, with an encrypted file fallback), then pick a pre-saved key from a dropdown when creating or configuring a host.
+- **Authentication** — password or private-key (with optional passphrase). Saved credentials stay local and are protected by an encrypted vault backed by the OS keyring.
 - **Live server stats** — per-session CPU / RAM / disk readouts pulled from a dedicated SSH channel.
 - **Bundled SFTP file manager** — browse, upload, download, and manage remote files for the active session.
 - **Scrollback & keyword highlighting** — full terminal emulation with a scrollable history buffer.

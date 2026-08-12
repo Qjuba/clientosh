@@ -24,14 +24,15 @@ struct SessionProfile {
     QString user;
     QString password;
     bool savePassword = false;
-    QString privateKeyPath; // if set, prefer public-key auth
+    QString privateKeyPath; // if set, prefer public-key auth (filesystem path)
+    QString privateKeyId;   // if set, use a key pre-saved in the keyring (overrides path)
     QString keyPassphrase;  // for encrypted keys (not persisted by default)
     bool saveKeyPassphrase = false;
     ConnectionMode connectionMode = ConnectionMode::Ssh;
 
     bool usesPrivateKey() const
     {
-        return !privateKeyPath.trimmed().isEmpty();
+        return !privateKeyId.trimmed().isEmpty() || !privateKeyPath.trimmed().isEmpty();
     }
 
     bool isSftpOnly() const
@@ -97,6 +98,7 @@ inline QVector<SessionProfile> profilesFromQSettings()
             p.password = s.value(QStringLiteral("password")).toString();
         }
         p.privateKeyPath = s.value(QStringLiteral("privateKeyPath")).toString();
+        p.privateKeyId = s.value(QStringLiteral("privateKeyId")).toString();
         p.saveKeyPassphrase = s.value(QStringLiteral("saveKeyPassphrase"), false).toBool();
         if (p.saveKeyPassphrase) {
             p.keyPassphrase = s.value(QStringLiteral("keyPassphrase")).toString();
@@ -125,6 +127,7 @@ inline QJsonObject profileToJson(const SessionProfile& p)
     o.insert(QStringLiteral("user"), p.user);
     o.insert(QStringLiteral("savePassword"), p.savePassword);
     o.insert(QStringLiteral("privateKeyPath"), p.privateKeyPath);
+    o.insert(QStringLiteral("privateKeyId"), p.privateKeyId);
     o.insert(QStringLiteral("saveKeyPassphrase"), p.saveKeyPassphrase);
     o.insert(QStringLiteral("connectionMode"), connectionModeToString(p.connectionMode));
     return o;
@@ -140,6 +143,7 @@ inline SessionProfile profileFromJson(const QJsonObject& o)
     p.user = o.value(QStringLiteral("user")).toString();
     p.savePassword = o.value(QStringLiteral("savePassword")).toBool(false);
     p.privateKeyPath = o.value(QStringLiteral("privateKeyPath")).toString();
+    p.privateKeyId = o.value(QStringLiteral("privateKeyId")).toString();
     p.saveKeyPassphrase = o.value(QStringLiteral("saveKeyPassphrase")).toBool(false);
     p.connectionMode = connectionModeFromString(
         o.value(QStringLiteral("connectionMode")).toString(QStringLiteral("ssh")));

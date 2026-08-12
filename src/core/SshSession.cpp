@@ -1,5 +1,7 @@
 #include "SshSession.h"
 
+#include "PrivateKeyLoader.h"
+
 #include <libssh/libssh.h>
 
 #include <QAtomicInt>
@@ -82,6 +84,7 @@ void SshSession::connectTo(const QString& host,
                            const QString& user,
                            const QString& password,
                            const QString& privateKeyPath,
+                           const QString& privateKeyId,
                            const QString& keyPassphrase)
 {
     bool needStart = false;
@@ -92,6 +95,7 @@ void SshSession::connectTo(const QString& host,
         m_user = user;
         m_password = password;
         m_privateKeyPath = privateKeyPath;
+        m_privateKeyId = privateKeyId;
         m_keyPassphrase = keyPassphrase;
         m_pendingWrite.clear();
         // Keep m_cols/m_rows from resizePty() — do not reset size here.
@@ -162,30 +166,28 @@ void SshSession::cleanup()
 
 bool SshSession::authenticate(const QString& password,
                               const QString& privateKeyPath,
+                              const QString& privateKeyId,
                               const QString& keyPassphrase,
                               QString* errorOut)
 {
-    const QString keyPath = privateKeyPath.trimmed();
-    if (!keyPath.isEmpty()) {
+    const bool usePrivateKey = !privateKeyId.trimmed().isEmpty() || !privateKeyPath.trimmed().isEmpty();
+    if (usePrivateKey) {
         emit statusChanged(QStringLiteral("authenticating with private key..."));
 
-        ssh_key privkey = nullptr;
-        const QByteArray pathUtf8 = keyPath.toUtf8();
-        const QByteArray passUtf8 = keyPassphrase.toUtf8();
-        const char* passPtr = keyPassphrase.isEmpty() ? nullptr : passUtf8.constData();
+        SessionProfile loaderProfile;
+        loaderProfile.privateKeyId = privateKeyId;
+        loaderProfile.privateKeyPath = privateKeyPath;
+        loaderProfile.keyPassphrase = keyPassphrase;
 
-        const int importRc = ssh_pki_import_privkey_file(pathUtf8.constData(),
-                                                        passPtr,
-                                                        nullptr,
-                                                        nullptr,
-                                                        &privkey);
-        if (importRc != SSH_OK || !privkey) {
+        ssh_key privkey = nullptr;
+        QString loadErr;
+        const bool loaded = loadProfilePrivateKey(loaderProfile, &privkey, &loadErr);
+        if (!loaded) {
             if (errorOut) {
-                *errorOut = QStringLiteral("failed to load private key \"%1\": %2")
-                                .arg(keyPath, QString::fromUtf8(ssh_get_error(m_session)));
-            }
-            if (privkey) {
-                ssh_key_free(privkey);
+                *errorOut = QStringLiteral("%1: %2")
+                                .arg(loadErr.isEmpty() ? QStringLiteral("failed to load private key")
+                                                       : loadErr,
+                                     QString::fromUtf8(ssh_get_error(m_session)));
             }
             return false;
         }
@@ -235,6 +237,7 @@ void SshSession::run()
         QString user;
         QString password;
         QString privateKeyPath;
+        QString privateKeyId;
         QString keyPassphrase;
         int port = 22;
         int cols = 80;
@@ -246,6 +249,7 @@ void SshSession::run()
             user = m_user;
             password = m_password;
             privateKeyPath = m_privateKeyPath;
+            privateKeyId = m_privateKeyId;
             keyPassphrase = m_keyPassphrase;
             port = m_port;
             cols = m_cols;
@@ -300,7 +304,7 @@ void SshSession::run()
 
         {
             QString authError;
-            if (!authenticate(password, privateKeyPath, keyPassphrase, &authError)) {
+            if (!authenticate(password, privateKeyPath, privateKeyId, keyPassphrase, &authError)) {
                 const bool cancelled = stopRequested();
                 cleanup();
                 if (!cancelled) {

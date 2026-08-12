@@ -9,6 +9,12 @@ set(CMAKE_AUTOUIC ON)
 
 include(GNUInstallDirs)
 
+# ---- Version header -------------------------------------------------------
+# Generates src/version.h (from version.h.in) so the app can display the exact
+# version declared by project(VERSION ...) at the top of this file. Bump the
+# version once here and every artifact (About tab, RC, installers) follows.
+configure_file(src/version.h.in "${CMAKE_CURRENT_BINARY_DIR}/version.h" @ONLY)
+
 # The Windows resource file and the NSIS/Inno installer scripts are generated
 # from .in templates so the version lives only in the "VERSION" argument above.
 # Bump the version in project(...) and every artifact follows automatically.
@@ -125,6 +131,8 @@ add_executable(clientosh
     src/core/SessionManager.cpp
     src/core/SftpClient.h
     src/core/SftpClient.cpp
+    src/core/SftpCrossTransfer.h
+    src/core/SftpCrossTransfer.cpp
     src/core/ServerStatsClient.h
     src/core/ServerStatsClient.cpp
     src/core/FontManager.h
@@ -135,6 +143,7 @@ add_executable(clientosh
     src/core/KeyringAdapter.cpp
     src/core/VaultManager.h
     src/core/VaultManager.cpp
+    src/core/PrivateKeyLoader.h
     src/PanelTypes.h
     src/DropOverlay.h
     src/DropOverlay.cpp

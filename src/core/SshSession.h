@@ -27,6 +27,7 @@ public:
                    const QString& user,
                    const QString& password,
                    const QString& privateKeyPath = {},
+                   const QString& privateKeyId = {},
                    const QString& keyPassphrase = {});
     void disconnectFromHost();
     void sendData(const QByteArray& data);
@@ -49,6 +50,7 @@ private:
     bool stopRequested() const;
     bool authenticate(const QString& password,
                       const QString& privateKeyPath,
+                      const QString& privateKeyId,
                       const QString& keyPassphrase,
                       QString* errorOut);
 
@@ -58,6 +60,7 @@ private:
     QString m_user;
     QString m_password;
     QString m_privateKeyPath;
+    QString m_privateKeyId;
     QString m_keyPassphrase;
     int m_port = 22;
     int m_cols = 80;

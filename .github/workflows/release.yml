@@ -39,6 +39,7 @@ jobs:
             mingw-w64-x86_64-qt6-svg
             mingw-w64-x86_64-libssh
             mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-ntldd
             mingw-w64-x86_64-nsis
             p7zip
 
@@ -48,18 +49,23 @@ jobs:
       - name: Build
         run: cmake --build build-win -j 4
 
-      - name: Copy libssh + runtime DLLs next to the exe
+      - name: Copy DLL dependency closure next to the exe
         run: |
-          # libssh / OpenSSL / MinGW runtime must sit beside the exe for the
-          # portable zip and the NSIS/Inno installers. Copied from the MSYS2
-          # prefix (works regardless of how CMake resolved the libraries).
-          for dll in libssh.dll libcrypto-3-x64.dll libssl-3-x64.dll \
-                     zlib1.dll libgcc_s_seh-1.dll libstdc++-6.dll \
-                     libwinpthread-1.dll; do
-            if [ -f "/mingw64/bin/$dll" ]; then
-              cp "/mingw64/bin/$dll" "build-win/$dll"
-            fi
-          done
+          # Resolve every DLL referenced by the exe (Qt, libssh, OpenSSL, MinGW
+          # runtime, and Qt's transitive deps such as libdouble-conversion.dll)
+          # and copy it beside the exe. Hardcoding the list missed those
+          # transitive deps, so the installer failed to launch on a clean
+          # system. ntldd -R walks the full closure.
+          ntldd -R build-win/clientosh.exe \
+            | sed 's/\\/\//g' \
+            | grep -oiE '[^ ]+mingw64/bin/[^ ]+\.dll' \
+            | sed -E 's#^.*mingw64/bin/#/mingw64/bin/#' \
+            | sort -u \
+            | while read -r dll; do
+                if [ -f "$dll" ]; then
+                  cp "$dll" build-win/
+                fi
+              done
           ls -la build-win/*.dll
 
       - name: Deploy Qt runtime (DLLs + plugins)

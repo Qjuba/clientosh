@@ -168,6 +168,7 @@ add_executable(clientosh
 target_include_directories(clientosh PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    ${CMAKE_CURRENT_BINARY_DIR}
 )
 
 target_link_libraries(clientosh PRIVATE

@@ -1,5 +1,6 @@
 #include "DashboardPage.h"
 #include "PlatformFonts.h"
+#include "version.h"
 #include "core/AppSettings.h"
 #include "core/FontManager.h"
 #include "core/SessionManager.h"
@@ -11,12 +12,15 @@
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
 #include <QInputDialog>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QMessageBox>
 #include <QFrame>
 #include <QHeaderView>
@@ -26,6 +30,8 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
@@ -36,6 +42,7 @@
 #include <QStyle>
 #include <QTableWidget>
 #include <QToolButton>
+#include <QUrl>
 #include <QVBoxLayout>
 
 namespace {
@@ -298,7 +305,8 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_settingsNav->setSpacing(1);
     m_settingsNav->addItems({QStringLiteral("General"), QStringLiteral("Appearance"),
                              QStringLiteral("Performance"), QStringLiteral("SSH / Sessions"),
-                             QStringLiteral("SFTP"), QStringLiteral("Shortcuts")});
+                             QStringLiteral("SFTP"), QStringLiteral("Shortcuts"),
+                             QStringLiteral("About")});
     m_settingsNav->setCurrentRow(0);
 
     m_settingsStack = new QStackedWidget(setBody);
@@ -719,6 +727,81 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         makeScrollPage(sec);
     }
 
+    // About
+    {
+        QWidget* sec = buildSettingsSection(QStringLiteral("About"), m_settingsStack);
+        auto* aLay = qobject_cast<QVBoxLayout*>(sec->layout());
+
+        auto* appName = new QLabel(QStringLiteral("clientosh"), sec);
+        appName->setObjectName(QStringLiteral("settingsAboutName"));
+        appName->setAlignment(Qt::AlignHCenter);
+        auto* appTag = new QLabel(QStringLiteral("Raw dark-gray SSH client (Qt 6 + libssh)"), sec);
+        appTag->setObjectName(QStringLiteral("dashHint"));
+        appTag->setAlignment(Qt::AlignHCenter);
+        appTag->setWordWrap(true);
+
+        m_aboutNet = new QNetworkAccessManager(this);
+
+        // Current version — pulled directly from CMake via the generated version.h.
+        m_aboutCurrentVersion = new QLabel(sec);
+        m_aboutCurrentVersion->setObjectName(QStringLiteral("settingsAboutVersion"));
+
+        // Latest version — fetched from GitHub Releases /latest. Defaults to a
+        // neutral "checking…" and never raises an error dialog if it fails.
+        m_aboutLatestVersion = new QLabel(sec);
+        m_aboutLatestVersion->setObjectName(QStringLiteral("dashHint"));
+        m_aboutLatestVersion->setWordWrap(true);
+        m_aboutLatestVersion->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+        m_aboutRetryBtn = new QPushButton(QStringLiteral("Check again"), sec);
+        m_aboutRetryBtn->setObjectName(QStringLiteral("dashButton"));
+        m_aboutRetryBtn->setFocusPolicy(Qt::NoFocus);
+        m_aboutRetryBtn->setCursor(Qt::PointingHandCursor);
+        connect(m_aboutRetryBtn, &QPushButton::clicked, this, &DashboardPage::checkLatestVersion);
+
+        auto* repoBtn = new QPushButton(QStringLiteral("Open repository on GitHub"), sec);
+        repoBtn->setObjectName(QStringLiteral("dashSecondary"));
+        repoBtn->setFocusPolicy(Qt::NoFocus);
+        repoBtn->setCursor(Qt::PointingHandCursor);
+        connect(repoBtn, &QPushButton::clicked, this, []() {
+            QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/hdmain/clientosh")));
+        });
+
+        auto* starBtn = new QPushButton(QStringLiteral("★ Star this project on GitHub"), sec);
+        starBtn->setObjectName(QStringLiteral("dashPrimary"));
+        starBtn->setCursor(Qt::PointingHandCursor);
+        starBtn->setFocusPolicy(Qt::NoFocus);
+        connect(starBtn, &QPushButton::clicked, this, []() {
+            QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/hdmain/clientosh")));
+        });
+        auto* starHint = new QLabel(
+            QStringLiteral("A star on GitHub is the best way to support clientosh — it only takes a second."),
+            sec);
+        starHint->setObjectName(QStringLiteral("dashHint"));
+        starHint->setWordWrap(true);
+
+        aLay->addSpacing(12);
+        aLay->addWidget(appName);
+        aLay->addWidget(appTag);
+        aLay->addSpacing(20);
+        aLay->addWidget(m_aboutCurrentVersion);
+        aLay->addWidget(m_aboutLatestVersion);
+        aLay->addSpacing(6);
+        aLay->addWidget(m_aboutRetryBtn);
+        aLay->addSpacing(18);
+        aLay->addWidget(repoBtn);
+        aLay->addSpacing(4);
+        aLay->addWidget(starBtn);
+        aLay->addSpacing(6);
+        aLay->addWidget(starHint);
+
+        aLay->addStretch(1);
+
+        m_aboutCurrentVersion->setText(QStringLiteral("Current version: v%1").arg(CLIENTOSH_VERSION));
+        checkLatestVersion();
+        makeScrollPage(sec);
+    }
+
     setBodyLay->addWidget(m_settingsNav);
     auto* setRule = new QFrame(setBody);
     setRule->setObjectName(QStringLiteral("sideRule"));
@@ -956,6 +1039,62 @@ void DashboardPage::setSettingsCategory(int index)
         return;
     }
     m_settingsStack->setCurrentIndex(index);
+}
+
+void DashboardPage::checkLatestVersion()
+{
+    if (!m_aboutNet || !m_aboutLatestVersion || !m_aboutRetryBtn) {
+        return;
+    }
+    m_aboutLatestVersion->setText(QStringLiteral("Latest version: checking…"));
+    m_aboutRetryBtn->setEnabled(false);
+
+    QNetworkRequest request(
+        QUrl(QStringLiteral("https://api.github.com/repos/hdmain/clientosh/releases/latest")));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("clientosh/") + CLIENTOSH_VERSION);
+    request.setRawHeader("Accept", QByteArrayLiteral("application/vnd.github+json"));
+
+    QNetworkReply* reply = m_aboutNet->get(request);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        reply->deleteLater();
+        m_aboutRetryBtn->setEnabled(true);
+
+        if (!m_aboutLatestVersion) {
+            return;
+        }
+
+        // Network error, non-200 (incl. "no releases yet" → HTTP 404), or a
+        // malformed payload all resolve to a friendly message instead of crashing.
+        if (reply->error() != QNetworkReply::NoError || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200) {
+            m_aboutLatestVersion->setText(QStringLiteral(
+                "Latest version: unavailable (no released versions yet or no connection). "
+                "This is normal — %1 is the first release on the way.")
+                                              .arg(CLIENTOSH_VERSION));
+            return;
+        }
+
+        const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        const QString tagName =
+            doc.isObject() ? doc.object().value(QStringLiteral("tag_name")).toString() : QString();
+        QString tag = tagName.trimmed();
+        if (!tag.isEmpty() && tag.at(0) == QLatin1Char('v')) {
+            tag = tag.mid(1);
+        }
+
+        if (tag.isEmpty()) {
+            m_aboutLatestVersion->setText(QStringLiteral(
+                "Latest version: unavailable (no released versions yet). "
+                "This is normal — %1 is the first release on the way.")
+                                              .arg(CLIENTOSH_VERSION));
+            return;
+        }
+
+        const QString current = QStringLiteral(CLIENTOSH_VERSION);
+        const bool upToDate = tag == current;
+        m_aboutLatestVersion->setText(upToDate
+                                          ? QStringLiteral("Latest version: v%1 — you are up to date.").arg(tag)
+                                          : QStringLiteral("Latest version: v%1 — update available.").arg(tag));
+    });
 }
 
 void DashboardPage::populateFontCombos()

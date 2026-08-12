@@ -21,6 +21,8 @@ class QButtonGroup;
 class QComboBox;
 class QAbstractButton;
 class QKeySequenceEdit;
+class QNetworkAccessManager;
+class QNetworkReply;
 
 class DashboardPage : public QWidget
 {
@@ -60,7 +62,8 @@ private:
         Performance,
         Ssh,
         Sftp,
-        Shortcuts
+        Shortcuts,
+        About
     };
 
     void rebuildSavedList();
@@ -93,6 +96,7 @@ private:
     void importKeyIntoKeyring();
     void removeSelectedKeyringKey();
     void onKeyringSelectionChanged(int index);
+    void checkLatestVersion();
     void fillProfileFromForm(SessionProfile* profile) const;
     int profileIndexById(const QString& id) const;
     QToolButton* makeNavButton(const QString& iconPath, const QString& text, QWidget* parent);
@@ -201,6 +205,11 @@ private:
     QCheckBox* m_enableFontReset = nullptr;
 
     QLabel* m_hint = nullptr;
+
+    QNetworkAccessManager* m_aboutNet = nullptr;
+    QLabel* m_aboutCurrentVersion = nullptr;
+    QLabel* m_aboutLatestVersion = nullptr;
+    QPushButton* m_aboutRetryBtn = nullptr;
 
     QVector<SessionProfile> m_profiles;
     QString m_editingId;

@@ -55,16 +55,17 @@ Source: "{#BuildDir}\clientosh.exe";       DestDir: "{app}"; Flags: ignoreversio
 ; Application icon (used by shortcuts / uninstaller display)
 Source: "@ICO_DIR@";                        DestDir: "{app}"; Flags: ignoreversion
 
-; Qt6 DLLs
+; Qt6 DLLs. Qt6OpenGL/OpenGLWidgets/opengl32sw/D3Dcompiler may be absent on
+; some Qt builds, so mark them optional (same intent as the NSIS /nonfatal).
 Source: "{#BuildDir}\Qt6Core.dll";          DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\Qt6Gui.dll";           DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\Qt6Network.dll";       DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\Qt6OpenGL.dll";        DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\Qt6OpenGLWidgets.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\Qt6OpenGL.dll";        DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#BuildDir}\Qt6OpenGLWidgets.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#BuildDir}\Qt6Svg.dll";           DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BuildDir}\Qt6Widgets.dll";       DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\D3Dcompiler_47.dll";   DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\opengl32sw.dll";       DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BuildDir}\D3Dcompiler_47.dll";   DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#BuildDir}\opengl32sw.dll";       DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; libssh + OpenSSL + MinGW runtime DLLs
 Source: "{#BuildDir}\libssh.dll";           DestDir: "{app}"; Flags: ignoreversion
@@ -81,14 +82,22 @@ Source: "{#BuildDir}\platforms\*.dll";                      DestDir: "{app}\plat
 ; Qt image format plugins
 Source: "{#BuildDir}\imageformats\*.dll";                   DestDir: "{app}\imageformats"; Flags: ignoreversion
 
-; Qt style plugin
+; Qt default style plugin (only present when windeployqt deployed it)
+#if DirExists("{#BuildDir}\styles")
 Source: "{#BuildDir}\styles\*.dll";                         DestDir: "{app}\styles";       Flags: ignoreversion
+#endif
 
 ; Qt TLS / network / icon engine / generic plugins (added by windeployqt)
 Source: "{#BuildDir}\tls\*.dll";                            DestDir: "{app}\tls";          Flags: ignoreversion
+#if DirExists("{#BuildDir}\networkinformation")
 Source: "{#BuildDir}\networkinformation\*.dll";             DestDir: "{app}\networkinformation"; Flags: ignoreversion
+#endif
+#if DirExists("{#BuildDir}\iconengines")
 Source: "{#BuildDir}\iconengines\*.dll";                    DestDir: "{app}\iconengines";  Flags: ignoreversion
+#endif
+#if DirExists("{#BuildDir}\generic")
 Source: "{#BuildDir}\generic\*.dll";                        DestDir: "{app}\generic";      Flags: ignoreversion
+#endif
 
 [Icons]
 Name: "{group}\{#AppName}";          Filename: "{app}\{#AppExeName}"; IconFilename: "{app}\clientosh.ico"

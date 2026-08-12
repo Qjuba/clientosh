@@ -144,6 +144,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config dpkg-dev \
+            rpm \
             qt6-base-dev libqt6svg6-dev libssh-dev libssl-dev \
             libgl1-mesa-dev libegl1-mesa-dev \
             imagemagick libfuse2 file
@@ -162,6 +163,13 @@ jobs:
         id: deb
         run: |
           file=$(find build-deb -maxdepth 1 -name '*.deb' -print -quit)
+          echo "path=$file" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
+
+      - name: Locate .rpm
+        id: rpm
+        run: |
+          file=$(find build-deb -maxdepth 1 -name '*.rpm' -print -quit)
           echo "path=$file" >> "$GITHUB_OUTPUT"
           echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
 
@@ -216,6 +224,16 @@ jobs:
           asset_name: ${{ steps.deb.outputs.name }}
           overwrite: true
 
+      - name: Upload .rpm
+        if: steps.rpm.outputs.path != ''
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ steps.rpm.outputs.path }}
+          tag: ${{ github.ref }}
+          asset_name: ${{ steps.rpm.outputs.name }}
+          overwrite: true
+
       - name: Upload .tar.gz
         uses: svenstaro/upload-release-action@v2
         with:
@@ -239,8 +257,59 @@ jobs:
           name: linux-assets
           path: |
             build-deb/*.deb
+            build-deb/*.rpm
             clientosh-${{ env.REF_NAME }}-linux.tar.gz
             clientosh-*.AppImage
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Arch Linux: .pkg.tar.zst (built with makepkg inside an Arch container)
+  # ---------------------------------------------------------------------------
+  build-arch:
+    name: Arch (.pkg.tar.zst)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Arch package with makepkg
+        run: |
+          set -e
+          docker run --interactive --rm --privileged \
+            -v "$GITHUB_WORKSPACE":/work \
+            -w /work/packaging/arch \
+            archlinux/archlinux:base-devel \
+          bash -e <<'EOF'
+            pacman -Sy --noconfirm --needed \
+              qt6-base qt6-svg libssh openssl cmake ninja pkgconf
+            # makepkg refuses to run as root; build as a dedicated user.
+            useradd -m builder
+            chown -R builder:builder /work
+            runuser -u builder -- makepkg -sf --noconfirm
+          EOF
+
+      - name: Locate Arch .pkg.tar.zst
+        id: arch
+        run: |
+          file=$(find packaging/arch -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)
+          echo "path=$file" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Arch package to release
+        if: steps.arch.outputs.path != ''
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ steps.arch.outputs.path }}
+          tag: ${{ github.ref }}
+          asset_name: ${{ steps.arch.outputs.name }}
+          overwrite: true
+
+      - name: Upload Arch package artifact
+        if: steps.arch.outputs.path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-arch
+          path: ${{ steps.arch.outputs.path }}
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
@@ -337,7 +406,7 @@ jobs:
   checksums:
     name: Generate checksums
     runs-on: ubuntu-latest
-    needs: [build-windows, build-linux, build-macos]
+    needs: [build-windows, build-linux, build-arch, build-macos]
     steps:
       - name: Download all installer artifacts
         uses: actions/download-artifact@v4

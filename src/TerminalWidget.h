@@ -143,7 +143,7 @@ private:
     void clearSelection();
     void setSelectionRange(int a, int b);
     QString selectedText() const;
-    void copySelectionToClipboard();
+    void copySelectionToClipboard(bool clearSel = true);
     void pasteClipboard();
     void selectWordAt(int row, int col);
     void selectLineAt(int row);

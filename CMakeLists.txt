@@ -348,7 +348,11 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 endif()
 
 if(UNIX AND NOT APPLE)
-    set(CPACK_GENERATOR "DEB")
+    # Produce both a .deb (Debian/Ubuntu) and a .rpm (Fedora/RHEL/openSUSE) from
+    # the same installation tree via CPack.
+    set(CPACK_GENERATOR "DEB;RPM")
+
+    # ---- Debian / Ubuntu (.deb) ----
     set(CPACK_DEBIAN_PACKAGE_MAINTAINER "clientosh <clientosh@localhost>")
     set(CPACK_DEBIAN_PACKAGE_SECTION "net")
     set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
@@ -357,6 +361,19 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
         "libqt6widgets6 | libqt6widgets6t64, libqt6network6 | libqt6network6t64, libqt6svg6 | libqt6svg6t64, libssh-4, libssl3"
+    )
+
+    # ---- RPM (Fedora / RHEL / openSUSE) ----
+    set(CPACK_RPM_PACKAGE_SUMMARY "Raw dark-gray SSH client (Qt 6 + libssh)")
+    set(CPACK_RPM_PACKAGE_LICENSE "MIT")
+    set(CPACK_RPM_PACKAGE_GROUP "Applications/Internet")
+    set(CPACK_RPM_PACKAGE_URL "https://github.com/clientosh/clientosh")
+    set(CPACK_RPM_PACKAGE_RELOCATABLE OFF)
+    set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
+    set(CPACK_RPM_PACKAGE_AUTOREQ ON)
+    # libssh is dlopen'd / linked; listed deps mirror the Debian ones.
+    set(CPACK_RPM_PACKAGE_REQUIRES
+        "qt6-qtbase, qt6-qtsvg, libssh, openssl-libs"
     )
 endif()
 

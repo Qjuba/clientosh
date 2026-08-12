@@ -1925,13 +1925,15 @@ QString TerminalWidget::selectedText() const
     return text;
 }
 
-void TerminalWidget::copySelectionToClipboard()
+void TerminalWidget::copySelectionToClipboard(bool clearSel)
 {
     const QString text = selectedText();
     if (!text.isEmpty()) {
         QApplication::clipboard()->setText(text);
     }
-    clearSelection();
+    if (clearSel) {
+        clearSelection();
+    }
 }
 
 void TerminalWidget::pasteClipboard()
@@ -1942,6 +1944,8 @@ void TerminalWidget::pasteClipboard()
     const QString text = QApplication::clipboard()->text();
     if (!text.isEmpty()) {
         emit inputReady(text.toUtf8());
+        // On paste, clear any active selection.
+        clearSelection();
     }
 }
 
@@ -2557,7 +2561,7 @@ void TerminalWidget::mousePressEvent(QMouseEvent* event)
 
         if (m_clickCount >= 3) {
             selectLineAt(cell.y());
-            copySelectionToClipboard();
+            copySelectionToClipboard(false);
             m_selecting = false;
             m_clickCount = 0;
             event->accept();
@@ -2638,9 +2642,13 @@ void TerminalWidget::mouseReleaseEvent(QMouseEvent* event)
         const int idx = indexFromCell(cell.y(), cell.x());
         setSelectionRange(m_selAnchor, idx);
 
-        // PuTTY: releasing a selection copies it to the clipboard
+        // PuTTY: releasing a selection copies it to the clipboard,
+        // but keep the selection visible so it stays highlighted.
         if (hasSelection() && m_selStart != m_selEnd) {
-            copySelectionToClipboard();
+            const QString text = selectedText();
+            if (!text.isEmpty()) {
+                QApplication::clipboard()->setText(text);
+            }
         } else if (hasSelection() && m_selStart == m_selEnd) {
             // Single click: clear selection (no drag)
             clearSelection();
@@ -2662,7 +2670,7 @@ void TerminalWidget::mouseDoubleClickEvent(QMouseEvent* event)
     if (event->button() == Qt::LeftButton) {
         const QPoint cell = cellFromPos(event->pos());
         selectWordAt(cell.y(), cell.x());
-        copySelectionToClipboard();
+        copySelectionToClipboard(false);
         m_selecting = false;
         event->accept();
         return;

@@ -75,25 +75,26 @@ Section "Main" SecMain
   ; Application icon (installed next to the exe for shortcuts / uninstaller)
   File "@ICO_DIR@"
 
-  ; Qt & runtime DLLs (root of build dir)
+  ; Qt & runtime DLLs (root of build dir). Some are optional and may not be
+  ; present after windeployqt on a given Qt build, so use /nonfatal.
   File "${BUILD_DIR}\Qt6Core.dll"
   File "${BUILD_DIR}\Qt6Gui.dll"
   File "${BUILD_DIR}\Qt6Network.dll"
-  File "${BUILD_DIR}\Qt6OpenGL.dll"
-  File "${BUILD_DIR}\Qt6OpenGLWidgets.dll"
-  File "${BUILD_DIR}\Qt6Svg.dll"
+  File /nonfatal "${BUILD_DIR}\Qt6OpenGL.dll"
+  File /nonfatal "${BUILD_DIR}\Qt6OpenGLWidgets.dll"
+  File /nonfatal "${BUILD_DIR}\Qt6Svg.dll"
   File "${BUILD_DIR}\Qt6Widgets.dll"
-  File "${BUILD_DIR}\D3Dcompiler_47.dll"
-  File "${BUILD_DIR}\opengl32sw.dll"
+  File /nonfatal "${BUILD_DIR}\D3Dcompiler_47.dll"
+  File /nonfatal "${BUILD_DIR}\opengl32sw.dll"
 
   ; libssh + crypto DLLs
   File "${BUILD_DIR}\libssh.dll"
-  File "${BUILD_DIR}\libcrypto-3-x64.dll"
-  File "${BUILD_DIR}\libssl-3-x64.dll"
+  File /nonfatal "${BUILD_DIR}\libcrypto-3-x64.dll"
+  File /nonfatal "${BUILD_DIR}\libssl-3-x64.dll"
   File "${BUILD_DIR}\libgcc_s_seh-1.dll"
   File "${BUILD_DIR}\libstdc++-6.dll"
   File "${BUILD_DIR}\libwinpthread-1.dll"
-  File "${BUILD_DIR}\zlib1.dll"
+  File /nonfatal "${BUILD_DIR}\zlib1.dll"
 
   ; Qt platform plugin
   SetOutPath "$INSTDIR\platforms"
@@ -101,19 +102,19 @@ Section "Main" SecMain
 
   ; Qt image format plugins
   SetOutPath "$INSTDIR\imageformats"
-  File /r "${BUILD_DIR}\imageformats\*.dll"
+  File /nonfatal /r "${BUILD_DIR}\imageformats\*.dll"
 
   ; Qt icon engine / TLS / network plugins (added by windeployqt)
   SetOutPath "$INSTDIR\iconengines"
-  File /r "${BUILD_DIR}\iconengines\*.dll"
+  File /nonfatal /r "${BUILD_DIR}\iconengines\*.dll"
   SetOutPath "$INSTDIR\tls"
-  File /r "${BUILD_DIR}\tls\*.dll"
+  File /nonfatal /r "${BUILD_DIR}\tls\*.dll"
   SetOutPath "$INSTDIR\networkinformation"
-  File /r "${BUILD_DIR}\networkinformation\*.dll"
+  File /nonfatal /r "${BUILD_DIR}\networkinformation\*.dll"
 
   ; Qt style plugin
   SetOutPath "$INSTDIR\styles"
-  File /r "${BUILD_DIR}\styles\*.dll"
+  File /nonfatal /r "${BUILD_DIR}\styles\*.dll"
 
   ; ---- Write uninstall registry keys ----
   WriteRegStr   HKLM "${UNINSTALL_KEY}" "DisplayName"          "${APP_NAME} ${APP_VERSION}"

@@ -574,6 +574,14 @@ bool SessionWorkspace::hasSftp(const QString& sessionId) const
     return m_panes.contains(PanelRef::sftp(sessionId).key());
 }
 
+QString SessionWorkspace::paneTitle(const PanelRef& ref) const
+{
+    if (PaneFrame* f = pane(ref)) {
+        return f->title();
+    }
+    return {};
+}
+
 QWidget* SessionWorkspace::terminalWidget(const QString& sessionId) const
 {
     if (PaneFrame* f = pane(PanelRef::terminal(sessionId))) {

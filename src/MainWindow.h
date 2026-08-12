@@ -43,6 +43,9 @@ private:
     void closePanel(const PanelRef& ref);
     void closeLiveSession(const QString& id);
     void openSftp(const QString& id);
+    void openStandaloneSftp(const SessionProfile& profile);
+    void openSftpFromSession(const QString& sessionId);
+    void createSftpPane(const QString& panelId, const SessionProfile& profile);
     void wireSessionTerminal(const QString& id, TerminalWidget* term);
     TerminalWidget* findTerminal(const QString& id) const;
 

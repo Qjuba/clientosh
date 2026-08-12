@@ -2,6 +2,7 @@
 
 #include "PanelTypes.h"
 #include "core/ServerStatsClient.h"
+#include "core/SessionProfile.h"
 
 #include <QWidget>
 #include <QStringList>
@@ -31,7 +32,7 @@ signals:
     void panelSelectRequested(const PanelRef& ref);
     void panelCloseRequested(const PanelRef& ref);
     void panelPreviewRequested(const PanelRef& ref);
-    void sftpRequested(const QString& sessionId);
+    void sftpRequested();
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;

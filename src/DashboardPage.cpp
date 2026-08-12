@@ -1370,17 +1370,10 @@ void DashboardPage::sftpSavedProfile(const QString& profileId)
     if (row < 0) {
         return;
     }
-    const SessionProfile& p = m_profiles[row];
-    for (const QString& id : m_sessions->sessionIds()) {
-        if (const auto* live = m_sessions->session(id)) {
-            if (live->profile.host == p.host && live->profile.user == p.user
-                && live->profile.port == p.port && live->connected) {
-                emit openSftpForSession(id);
-                return;
-            }
-        }
-    }
-    emit openSftpForProfile(p);
+    // Standalone SFTP: always open a new independent pane (own SSH session inside
+    // SftpClient). Never require or reuse a live SSH tab — multiple SFTPs to the
+    // same host/port/user can coexist.
+    emit openSftpForProfile(m_profiles[row]);
 }
 
 void DashboardPage::deleteSavedProfile(const QString& profileId)

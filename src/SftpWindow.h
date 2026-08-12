@@ -43,6 +43,7 @@ public:
     ~SftpWindow() override;
 
     QString sessionId() const { return m_sessionId; }
+    const SessionProfile& profile() const { return m_profile; }
     void applyAppSettings();
 
 signals:

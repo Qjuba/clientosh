@@ -78,7 +78,7 @@ TopNavBar::TopNavBar(SessionManager* sessions, SessionWorkspace* workspace, QWid
     m_menuBtn = makeNavIcon(QStringLiteral(":/icons/menu.svg"), QStringLiteral("dashboard"), this);
     m_newBtn = makeNavIcon(QStringLiteral(":/icons/plus.svg"), QStringLiteral("new session"), this);
     m_sftpBtn = makeNavIcon(QStringLiteral(":/icons/folder.svg"),
-                            QStringLiteral("open sftp pane for active session"), this);
+                            QStringLiteral("open standalone sftp · duplicates active sftp"), this);
 
     m_tabsHost = new QWidget(this);
     m_tabsHost->setAcceptDrops(true);
@@ -113,10 +113,7 @@ TopNavBar::TopNavBar(SessionManager* sessions, SessionWorkspace* workspace, QWid
     connect(m_menuBtn, &QToolButton::clicked, this, &TopNavBar::dashboardRequested);
     connect(m_newBtn, &QToolButton::clicked, this, &TopNavBar::newSessionRequested);
     connect(m_sftpBtn, &QToolButton::clicked, this, [this]() {
-        const QString id = m_sessions->activeId();
-        if (!id.isEmpty()) {
-            emit sftpRequested(id);
-        }
+        emit sftpRequested();
     });
 
     connect(m_sessions, &SessionManager::sessionOpened, this, [this](const QString&) { refresh(); });
@@ -267,10 +264,15 @@ void TopNavBar::refresh()
 {
     rebuildTabs();
 
-    if (auto* live = m_sessions->session(m_sessions->activeId())) {
+    // SFTP is standalone (its own SSH session) so the button is always enabled when
+    // any workspace exists; duplicating the active SFTP never needs a connected SSH tab.
+    if (m_workspace && m_workspace->hasAttachedSessions()) {
+        m_sftpBtn->setEnabled(true);
+    } else if (auto* live = m_sessions->session(m_sessions->activeId())) {
         m_sftpBtn->setEnabled(live->connected);
     } else {
-        m_sftpBtn->setEnabled(false);
+        // Still allow opening an SFTP from the dashboard hosts — MainWindow picks a profile.
+        m_sftpBtn->setEnabled(m_workspace && !m_workspace->openPanels().isEmpty());
     }
 
     syncStatsProbe();
@@ -292,14 +294,18 @@ void TopNavBar::rebuildTabs()
 
     const PanelRef active = m_workspace->activePanel();
     for (const PanelRef& ref : m_workspace->openPanels()) {
-        const auto* live = m_sessions->session(ref.sessionId);
-        if (!live) {
-            continue;
-        }
-
-        QString title = live->profile.displayTitle();
+        QString title;
         if (ref.kind == PanelKind::Sftp) {
-            title = QStringLiteral("sftp · %1").arg(title);
+            title = m_workspace->paneTitle(ref);
+            if (title.isEmpty()) {
+                title = QStringLiteral("sftp");
+            }
+        } else {
+            const auto* live = m_sessions->session(ref.sessionId);
+            if (!live) {
+                continue;
+            }
+            title = live->profile.displayTitle();
         }
 
         auto* chip = new SessionChip(ref, title, ref == active, m_tabsHost);

@@ -158,6 +158,11 @@ void PaneFrame::setTitle(const QString& title)
     m_title->setText(title);
 }
 
+QString PaneFrame::title() const
+{
+    return m_title ? m_title->text() : QString();
+}
+
 void PaneFrame::setActive(bool active)
 {
     m_active = active;

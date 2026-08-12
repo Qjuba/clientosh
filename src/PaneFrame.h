@@ -23,6 +23,7 @@ public:
     QWidget* takeContent();
     void setContent(QWidget* content);
     void setTitle(const QString& title);
+    QString title() const;
     void setActive(bool active);
     bool isActive() const { return m_active; }
     void releaseMotionResources();

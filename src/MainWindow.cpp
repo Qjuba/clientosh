@@ -22,6 +22,7 @@
 #include <QShortcut>
 #include <QStackedWidget>
 #include <QTimer>
+#include <QUuid>
 #include <QVBoxLayout>
 
 MainWindow::MainWindow(QWidget* parent)
@@ -54,8 +55,8 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(m_dashboard, &DashboardPage::openProfile, this, &MainWindow::openProfileSession);
     connect(m_dashboard, &DashboardPage::openLiveSession, this, &MainWindow::openOrFocusSession);
-    connect(m_dashboard, &DashboardPage::openSftpForSession, this, &MainWindow::openSftp);
-    connect(m_dashboard, &DashboardPage::openSftpForProfile, this, &MainWindow::openProfileThenSftp);
+    connect(m_dashboard, &DashboardPage::openSftpForSession, this, &MainWindow::openSftpFromSession);
+    connect(m_dashboard, &DashboardPage::openSftpForProfile, this, &MainWindow::openStandaloneSftp);
     connect(m_dashboard, &DashboardPage::closeLiveSession, this, &MainWindow::closeLiveSession);
 
     connect(m_dashboard, &DashboardPage::settingsApplied, this, [this]() {
@@ -89,7 +90,28 @@ MainWindow::MainWindow(QWidget* parent)
         showWorkspace();
         m_topNav->syncActiveChip();
     });
-    connect(m_topNav, &TopNavBar::sftpRequested, this, &MainWindow::openSftp);
+    // Duplicate SFTP for active panel or open SFTP for active SSH session.
+    connect(m_topNav, &TopNavBar::sftpRequested, this, [this]() {
+        const PanelRef active = m_workspace->activePanel();
+        if (active.isValid() && active.kind == PanelKind::Sftp) {
+            if (SftpWindow* src = m_sftpPanes.value(active.sessionId)) {
+                openStandaloneSftp(src->profile());
+                return;
+            }
+        }
+        const QString id = m_sessions->activeId();
+        if (!id.isEmpty()) {
+            openSftpFromSession(id);
+            return;
+        }
+        // No SSH session at all: pick the first saved profile to SFTP into by duplicating
+        // an existing standalone pane, or do nothing and let the user use the dashboard.
+        if (!m_sftpPanes.isEmpty()) {
+            if (SftpWindow* any = m_sftpPanes.constBegin().value()) {
+                openStandaloneSftp(any->profile());
+            }
+        }
+    });
 
     connect(m_workspace, &SessionWorkspace::sessionSelectRequested, this, &MainWindow::openOrFocusSession);
     connect(m_workspace, &SessionWorkspace::panelSelectRequested, this, &MainWindow::openOrFocusPanel);
@@ -212,10 +234,12 @@ void MainWindow::openProfileSession(const SessionProfile& profile)
 void MainWindow::openProfileThenSftp(const SessionProfile& profile)
 {
     if (profile.isSftpOnly()) {
-        openProfileSftpOnly(profile);
+        openStandaloneSftp(profile);
         return;
     }
-    beginTerminalSession(profile, true);
+    // SSH + SFTP: open both independently so SFTP never blocks on SSH.
+    beginTerminalSession(profile, false);
+    openStandaloneSftp(profile);
 }
 
 QString MainWindow::beginTerminalSession(const SessionProfile& profile, bool openSftpWhenConnected)
@@ -267,14 +291,8 @@ QString MainWindow::beginTerminalSession(const SessionProfile& profile, bool ope
 
 void MainWindow::openProfileSftpOnly(const SessionProfile& profile)
 {
-    // Background SSH session for lifecycle/status; UI shows only the SFTP pane.
-    const QString id = m_sessions->openSession(profile, 80, 24);
-    m_pendingSftpSessionId = id;
-    m_sftpOnlySessionIds.insert(id);
-    m_sessions->activateSession(id);
-    m_dashboard->appendLog(QStringLiteral("connecting sftp · %1").arg(profile.displayTitle()));
-    m_topNav->refresh();
-    m_dashboard->refresh();
+    // Standalone SFTP: no SessionManager session — SftpClient owns its SSH session.
+    openStandaloneSftp(profile);
 }
 
 void MainWindow::wireSessionTerminal(const QString& id, TerminalWidget* term)
@@ -330,9 +348,16 @@ void MainWindow::setupShortcuts()
         }
     });
     make(m_scOpenSftp, [this]() {
+        const PanelRef active = m_workspace->activePanel();
+        if (active.isValid() && active.kind == PanelKind::Sftp) {
+            if (SftpWindow* src = m_sftpPanes.value(active.sessionId)) {
+                openStandaloneSftp(src->profile());
+                return;
+            }
+        }
         const QString id = m_sessions->activeId();
         if (!id.isEmpty()) {
-            openSftp(id);
+            openSftpFromSession(id);
         }
     });
     make(m_scFontLarger, [this]() { adjustAllTerminalFonts(1, false); });
@@ -402,7 +427,14 @@ void MainWindow::openOrFocusSession(const QString& id)
 
 void MainWindow::openOrFocusPanel(const PanelRef& ref)
 {
-    if (!ref.isValid() || !m_sessions->session(ref.sessionId)) {
+    if (!ref.isValid()) {
+        return;
+    }
+    if (ref.kind == PanelKind::Terminal && !m_sessions->session(ref.sessionId)) {
+        return;
+    }
+    if (ref.kind == PanelKind::Sftp && !m_workspace->containsPanel(ref)
+        && !m_sessions->session(ref.sessionId)) {
         return;
     }
     if (ref.kind == PanelKind::Terminal) {
@@ -415,7 +447,37 @@ void MainWindow::openOrFocusPanel(const PanelRef& ref)
 
 void MainWindow::openSftp(const QString& id)
 {
+    // Legacy SSH-bound path: kept for wiring to SessionManager::sessionConnectionChanged.
+    // New standalone flow uses openStandaloneSftp / openSftpFromSession and never reuses ids.
+    if (m_workspace->hasSftp(id)) {
+        m_workspace->showPanel(PanelRef::sftp(id));
+        showWorkspace();
+        m_topNav->refresh();
+        return;
+    }
     auto* live = m_sessions->session(id);
+    if (!live || !live->connected) {
+        return;
+    }
+    createSftpPane(id, live->profile);
+}
+
+void MainWindow::openStandaloneSftp(const SessionProfile& profile)
+{
+    if (profile.host.trimmed().isEmpty() || profile.user.trimmed().isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("sftp"),
+                                 QStringLiteral("Profile needs a host and user to open SFTP."));
+        return;
+    }
+    // Each standalone SFTP gets its own panel key so two SFTPs to the same host can coexist.
+    const QString panelId = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    createSftpPane(panelId, profile);
+    m_dashboard->appendLog(QStringLiteral("sftp · %1").arg(profile.displayTitle()));
+}
+
+void MainWindow::openSftpFromSession(const QString& sessionId)
+{
+    auto* live = m_sessions->session(sessionId);
     if (!live) {
         return;
     }
@@ -424,29 +486,34 @@ void MainWindow::openSftp(const QString& id)
                                  QStringLiteral("Connect the session before opening SFTP."));
         return;
     }
-
-    if (m_workspace->hasSftp(id)) {
-        m_workspace->showPanel(PanelRef::sftp(id));
-        showWorkspace();
-        m_topNav->refresh();
-        return;
+    // Focus the session-bound pane if already open, otherwise open a fresh standalone pane
+    // so that the same SSH session can own multiple SFTP views.
+    if (m_workspace->hasSftp(sessionId)) {
+        // Keep the first one focused, but still allow a second one on repeated requests.
+        // The toolbar reuses the same action to duplicate the view, so always create new.
     }
+    openStandaloneSftp(live->profile);
+}
 
-    // Embed SFTP inside the split workspace (no separate OS window).
-    auto* pane = new SftpWindow(id, live->profile, m_workspace);
+void MainWindow::createSftpPane(const QString& panelId, const SessionProfile& profile)
+{
+    auto* pane = new SftpWindow(panelId, profile, m_workspace);
     pane->setStyleSheet(styleSheet());
-    m_sftpPanes.insert(id, pane);
+    m_sftpPanes.insert(panelId, pane);
     connect(pane, &SftpWindow::debugLog, this, [this](const QString& line) {
         m_dashboard->appendLog(line);
     });
     connect(pane, &SftpWindow::windowClosed, this, [this](const QString& sid) {
         m_sftpPanes.remove(sid);
         m_workspace->removePanel(PanelRef::sftp(sid), false);
+        if (!m_workspace->hasAttachedSessions()) {
+            showDashboard();
+        }
         m_topNav->refresh();
     });
 
-    const QString title = QStringLiteral("sftp · %1").arg(live->profile.displayTitle());
-    m_workspace->addSftp(id, pane, title);
+    const QString title = QStringLiteral("sftp · %1").arg(profile.displayTitle());
+    m_workspace->addSftp(panelId, pane, title);
     showWorkspace();
     m_topNav->refresh();
 }

@@ -25,6 +25,7 @@ public:
     void addTerminal(const QString& sessionId, QWidget* terminal, const QString& title);
     void addSftp(const QString& sessionId, QWidget* sftp, const QString& title);
     bool hasSftp(const QString& sessionId) const;
+    QString paneTitle(const PanelRef& ref) const;
     QWidget* takeTerminal(const QString& sessionId);
     QWidget* takeSftp(const QString& sessionId);
     QWidget* terminalWidget(const QString& sessionId) const;

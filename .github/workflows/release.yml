@@ -71,6 +71,13 @@ jobs:
           makensis build-win/installer/clientosh_installer.nsi
           ls -la clientosh-*-setup.exe
 
+      - name: Resolve installer filename
+        # The NSIS template names the output clientosh-<VERSION>-setup.exe with
+        # the bare version (no "v" prefix), unlike REF_NAME (e.g. v1.0.0). Expose
+        # the exact filename so the upload step and its guard reference it.
+        run: |
+          echo "SETUP_NAME=clientosh-${REF_NAME#v}-setup.exe" >> "$GITHUB_ENV"
+
       - name: Build portable .zip
         run: |
           # PowerShell Compress-Archive is always present on Windows runners,
@@ -79,11 +86,11 @@ jobs:
           ls -la clientosh-${REF_NAME}-win64-portable.zip
 
       - name: Upload NSIS installer
-        if: hashFiles(format('clientosh-{0}-setup.exe', env.REF_NAME)) != ''
+        if: hashFiles(env.SETUP_NAME) != ''
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh-${{ env.REF_NAME }}-setup.exe
+          file: ${{ env.SETUP_NAME }}
           tag: ${{ github.ref }}
           overwrite: true
 

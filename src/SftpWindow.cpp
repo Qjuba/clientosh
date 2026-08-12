@@ -4,6 +4,7 @@
 #include <QAbstractItemView>
 #include <QCloseEvent>
 #include <QColor>
+#include <QCoreApplication>
 #include <QDesktopServices>
 #include <QDir>
 #include <QDragEnterEvent>

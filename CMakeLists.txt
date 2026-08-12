@@ -30,6 +30,20 @@ set(OPENSSL_ROOT_DIR "" CACHE PATH "Optional OpenSSL install prefix")
 if(NOT OPENSSL_ROOT_DIR AND LIBSSH_ROOT)
     set(OPENSSL_ROOT_DIR "${LIBSSH_ROOT}")
 endif()
+# Homebrew OpenSSL is keg-only (not on the default search path). If we are on
+# Apple and no OpenSSL root was provided, point find_package at the keg.
+if(NOT OPENSSL_ROOT_DIR AND APPLE)
+    foreach(_keg
+            "/opt/homebrew/opt/openssl@3"
+            "/opt/homebrew/opt/openssl"
+            "/usr/local/opt/openssl@3"
+            "/usr/local/opt/openssl")
+        if(EXISTS "${_keg}/include/openssl/evp.h")
+            set(OPENSSL_ROOT_DIR "${_keg}")
+            break()
+        endif()
+    endforeach()
+endif()
 if(WIN32 AND OPENSSL_ROOT_DIR)
     set(OPENSSL_USE_STATIC_LIBS FALSE)
 endif()
@@ -300,7 +314,7 @@ if(UNIX AND NOT APPLE)
     # Prefer auto shlibdeps when dpkg-dev is installed; keep explicit fallback deps.
     set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
-        "libqt6widgets6 | libqt6widgets6t64, libqt6network6 | libqt6network6t64, libqt6svg6 | libqt6svg6t64, libssh-4"
+        "libqt6widgets6 | libqt6widgets6t64, libqt6network6 | libqt6network6t64, libqt6svg6 | libqt6svg6t64, libssh-4, libssl3"
     )
 endif()
 

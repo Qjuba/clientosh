@@ -81,12 +81,16 @@ jobs:
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" build-win/installer/clientosh_installer.iss
           ls -la clientosh-*-setup.exe
 
-      - name: Resolve installer filename
-        # The Inno template names the output clientosh-<VERSION>-setup.exe with
-        # the bare version (no "v" prefix), unlike REF_NAME (e.g. v1.0.0). Expose
-        # the exact filename so the upload step and its guard reference it.
+      - name: Locate installer filename
+        # Locate the actual .exe produced by ISCC instead of guessing its name
+        # from REF_NAME. The Inno template names the output after CMake's version
+        # (clientosh-<VERSION>-setup.exe, no "v" prefix), which may differ from the
+        # git tag. Finding the real file keeps the upload correct either way.
+        id: setup
         run: |
-          echo "SETUP_NAME=clientosh-${REF_NAME#v}-setup.exe" >> "$GITHUB_ENV"
+          file=$(ls clientosh-*-setup.exe 2>/dev/null | grep -i setup | head -n 1)
+          echo "path=$file" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
 
       - name: Build portable .zip
         run: |
@@ -96,12 +100,13 @@ jobs:
           ls -la clientosh-${REF_NAME}-win64-portable.zip
 
       - name: Upload Inno installer
-        if: hashFiles(env.SETUP_NAME) != ''
+        if: steps.setup.outputs.path != ''
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ env.SETUP_NAME }}
+          file: ${{ steps.setup.outputs.path }}
           tag: ${{ github.ref }}
+          asset_name: ${{ steps.setup.outputs.name }}
           overwrite: true
 
       - name: Upload portable .zip
@@ -347,7 +352,7 @@ jobs:
             <key>CFBundleIdentifier</key><string>io.github.clientosh</string>
             <key>CFBundleExecutable</key><string>clientosh</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>1.0.0</string>
+            <key>CFBundleShortVersionString</key><string>1.0.1</string>
             <key>CFBundleVersion</key><string>1</string>
             <key>LSMinimumSystemVersion</key><string>12.0</string>
             <key>NSHighResolutionCapable</key><true/>

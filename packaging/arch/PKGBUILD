@@ -4,7 +4,7 @@
 # together with each release.
 
 pkgname=clientosh
-pkgver=1.0.0
+pkgver=1.0.1
 pkgrel=1
 pkgdesc="Raw dark-gray SSH client (Qt 6 + libssh)"
 arch=('x86_64')

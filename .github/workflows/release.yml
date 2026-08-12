@@ -4,50 +4,17 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
-permissions:
-  contents: write
+env:
+  APP_NAME: clientosh
 
 jobs:
-  build-deb:
-    name: Build .deb (Ubuntu)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config dpkg-dev \
-            qt6-base-dev libqt6svg6-dev libssh-dev libssl-dev
-
-      - name: Configure
-        run: cmake -S . -B build-deb -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
-
-      - name: Build
-        run: cmake --build build-deb -j "$(nproc)"
-
-      - name: Package .deb
-        run: cmake --build build-deb --target package
-
-      - name: Find .deb
-        id: deb
-        run: |
-          file=$(find build-deb -maxdepth 1 -name '*.deb' -print -quit)
-          echo "path=$file" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
-
-      - name: Upload .deb to release
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ steps.deb.outputs.path }}
-          tag: ${{ github.ref }}
-          asset_name: ${{ steps.deb.outputs.name }}
-          overwrite: true
-
+  # ---------------------------------------------------------------------------
+  # Windows: NSIS .exe installer + portable .zip
+  # ---------------------------------------------------------------------------
   build-windows:
-    name: Build Windows installer
+    name: Windows (.exe installer + .zip)
     runs-on: windows-latest
     defaults:
       run:
@@ -64,10 +31,13 @@ jobs:
             git
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
             mingw-w64-x86_64-qt6-base
             mingw-w64-x86_64-qt6-svg
             mingw-w64-x86_64-libssh
             mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-nsis
+            mingw-w64-x86_64-p7zip
 
       - name: Configure
         run: cmake -S . -B build-win -G "Ninja" -DCMAKE_BUILD_TYPE=Release
@@ -75,15 +45,216 @@ jobs:
       - name: Build
         run: cmake --build build-win -j 4
 
-      - name: Deploy Qt runtime DLLs
+      - name: Deploy Qt runtime (DLLs + plugins)
         run: |
           windeployqt --no-translations --release build-win/clientosh.exe
 
-      - name: Upload Windows build
+      - name: Build NSIS installer
+        run: |
+          # The .nsi resolves input from ../build and emits ../clientosh-*-setup.exe
+          cp -r build-win build
+          (cd packaging && makensis clientosh_installer.nsi)
+
+      - name: Build portable .zip
+        run: |
+          (cd build-win && 7z a ../clientosh-win64-portable.zip *)
+
+      - name: Upload installer to release
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: build-win/clientosh.exe
+          file: clientosh-*-setup.exe
           tag: ${{ github.ref }}
-          asset_name: clientosh-${{ github.ref_name }}-win64.exe
+          asset_name: clientosh-${{ github.ref_name }}-win64-setup.exe
           overwrite: true
+
+      - name: Upload portable .zip to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: clientosh-win64-portable.zip
+          tag: ${{ github.ref }}
+          overwrite: true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: clientosh-win64
+          path: |
+            clientosh-*-setup.exe
+            clientosh-win64-portable.zip
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Ubuntu: .deb (CPack) + generic .tar.gz + .AppImage
+  # ---------------------------------------------------------------------------
+  build-linux:
+    name: Linux (.deb + .AppImage + .tar.gz)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config dpkg-dev \
+            qt6-base-dev libqt6svg6-dev libssh-dev libssl-dev imagemagick libfuse2
+
+      - name: Configure
+        run: cmake -S . -B build-deb -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr
+
+      - name: Build
+        run: cmake --build build-deb -j "$(nproc)"
+
+      - name: Package .deb
+        run: cmake --build build-deb --target package
+
+      - name: Locate .deb
+        id: deb
+        run: |
+          file=$(find build-deb -maxdepth 1 -name '*.deb' -print -quit)
+          echo "path=$file" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
+
+      - name: Build generic .tar.gz
+        run: |
+          cmake --install build-deb --prefix stage/usr
+          tar -C stage -czf clientosh-linux-${GITHUB_REF_NAME}.tar.gz usr
+
+      - name: Install linuxdeploy tooling
+        run: |
+          curl -L -o linuxdeploy.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy.AppImage
+          curl -L -o linuxdeploy-plugin-qt.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy-plugin-qt.AppImage
+
+      - name: Build AppImage
+        run: |
+          set -e
+          # Icon for the .desktop / AppImage catalog.
+          convert icons/terminal.svg AppDir-clientosh/terminal.png 2>/dev/null || true
+          mkdir -p AppDir-clientosh/usr/bin \
+                   AppDir-clientosh/usr/share/applications \
+                   AppDir-clientosh/usr/share/icons/hicolor/256x256/apps
+          cp build-deb/clientosh AppDir-clientosh/usr/bin/clientosh
+          cp packaging/clientosh.desktop AppDir-clientosh/usr/share/applications/clientosh.desktop
+          if [ -f AppDir-clientosh/terminal.png ]; then
+            cp AppDir-clientosh/terminal.png AppDir-clientosh/usr/share/icons/hicolor/256x256/apps/clientosh.png
+          fi
+
+          export LDAI_OUTPUT_DIR="$PWD"
+          export LD_LIBRARY_PATH="/usr/lib/qt6/lib:${LD_LIBRARY_PATH:-}"
+          export QTDIR="/usr/lib/qt6"
+
+          ./linuxdeploy.AppImage --appimage-extract-and-run \
+              --appdir AppDir-clientosh \
+              --desktop-file packaging/clientosh.desktop \
+              --icon-file AppDir-clientosh/terminal.png \
+              --plugin qt \
+              --output appimage 2>&1 | tail -60
+
+      - name: Upload .deb to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ steps.deb.outputs.path }}
+          tag: ${{ github.ref }}
+          asset_name: ${{ steps.deb.outputs.name }}
+          overwrite: true
+
+      - name: Upload .tar.gz to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: clientosh-linux-*.tar.gz
+          tag: ${{ github.ref }}
+          asset_name: clientosh-${{ github.ref_name }}-linux.tar.gz
+          overwrite: true
+
+      - name: Upload .AppImage to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: clientosh-*.AppImage
+          tag: ${{ github.ref }}
+          asset_name: clientosh-${{ github.ref_name }}-x86_64.AppImage
+          overwrite: true
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: clientosh-linux
+          path: |
+            build-deb/*.deb
+            clientosh-linux-*.tar.gz
+            clientosh-*.AppImage
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # macOS: .dmg
+  # ---------------------------------------------------------------------------
+  build-macos:
+    name: macOS (.dmg)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          brew update
+          brew install qt libssh openssl@3
+
+      - name: Configure
+        run: cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-macos -j "$(nproc)"
+
+      - name: Assemble .app bundle
+        run: |
+          APP=build-macos/clientosh.app
+          mkdir -p "$APP/Contents/MacOS"
+          cp build-macos/clientosh "$APP/Contents/MacOS/clientosh"
+          cat > "$APP/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>clientosh</string>
+            <key>CFBundleDisplayName</key><string>clientosh</string>
+            <key>CFBundleIdentifier</key><string>io.github.clientosh</string>
+            <key>CFBundleExecutable</key><string>clientosh</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${GITHUB_REF_NAME#v}</string>
+            <key>CFBundleVersion</key><string>1</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Deploy Qt frameworks
+        run: macdeployqt build-macos/clientosh.app
+
+      - name: Build .dmg
+        run: |
+          hdiutil create -volname clientosh -srcfolder build-macos/clientosh.app \
+                 -ov -format UDZO clientosh-macos.dmg
+
+      - name: Upload .dmg to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: clientosh-macos.dmg
+          tag: ${{ github.ref }}
+          asset_name: clientosh-${{ github.ref_name }}-macos.dmg
+          overwrite: true
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clientosh-macos
+          path: clientosh-macos.dmg
+          if-no-files-found: ignore

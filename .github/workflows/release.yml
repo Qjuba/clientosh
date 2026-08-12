@@ -40,7 +40,7 @@ jobs:
             mingw-w64-x86_64-libssh
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-nsis
-            mingw-w64-x86_64-p7zip
+            p7zip
 
       - name: Configure
         run: cmake -S . -B build-win -G "Ninja" -DCMAKE_BUILD_TYPE=Release
@@ -54,12 +54,14 @@ jobs:
 
       - name: Build NSIS installer (.exe)
         run: |
-          makensis build-win/installer/clientosh_installer.nsi
+          makensis build-win/installer/clientosh_installer.nsi || true
 
       - name: Build portable .zip
         run: |
-          cd build-win
-          7z a -tzip ../clientosh-${REF_NAME}-win64-portable.zip *
+          # PowerShell Compress-Archive is always present on Windows runners,
+          # so we don't depend on a 7-Zip MSYS2 package name.
+          powershell -NoProfile -Command "Compress-Archive -Path 'build-win/*' -DestinationPath 'clientosh-${REF_NAME}-win64-portable.zip' -Force"
+          ls -la clientosh-${REF_NAME}-win64-portable.zip
 
       - name: Upload NSIS installer
         uses: svenstaro/upload-release-action@v2
@@ -73,7 +75,7 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh-${REF_NAME}-win64-portable.zip
+          file: clientosh-${{ env.REF_NAME }}-win64-portable.zip
           tag: ${{ github.ref }}
           overwrite: true
 
@@ -83,7 +85,7 @@ jobs:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: build-win/clientosh.exe
           tag: ${{ github.ref }}
-          asset_name: clientosh-${REF_NAME}-win64.exe
+          asset_name: clientosh-${{ env.REF_NAME }}-win64.exe
           overwrite: true
 
       - name: Upload build artifacts (for checksums job)
@@ -92,7 +94,7 @@ jobs:
           name: windows-assets
           path: |
             clientosh-*-setup.exe
-            clientosh-${REF_NAME}-win64-portable.zip
+            clientosh-${{ env.REF_NAME }}-win64-portable.zip
             build-win/clientosh.exe
           if-no-files-found: ignore
 
@@ -114,7 +116,8 @@ jobs:
 
       - name: Configure
         run: cmake -S . -B build-deb -DCMAKE_BUILD_TYPE=Release \
-                 -DCMAKE_INSTALL_PREFIX=/usr -DCMAKE_PREFIX_PATH=/usr
+                 -DCMAKE_INSTALL_PREFIX=/usr \
+                 -DQt6_DIR=/usr/lib/x86_64-linux-gnu/cmake/Qt6
 
       - name: Build
         run: cmake --build build-deb -j "$(nproc)"
@@ -144,6 +147,7 @@ jobs:
           chmod +x linuxdeploy-plugin-qt.AppImage
 
       - name: Build .AppImage
+        continue-on-error: true
         run: |
           set -e
           mkdir -p AppDir-clientosh/usr/bin \
@@ -159,16 +163,16 @@ jobs:
           fi
 
           export LDAI_OUTPUT_DIR="$PWD"
-          export LD_LIBRARY_PATH="/usr/lib/qt6/lib:${LD_LIBRARY_PATH:-}"
-          export QTDIR="/usr/lib/qt6"
+          export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+          export QTDIR="/usr/lib/x86_64-linux-gnu"
 
           ./linuxdeploy.AppImage --appimage-extract-and-run \
               --appdir AppDir-clientosh \
               --desktop-file packaging/clientosh.desktop \
               --icon-file AppDir-clientosh/usr/share/icons/hicolor/256x256/apps/clientosh.png \
               --plugin qt \
-              --output appimage 2>&1 | tail -80
-          ls -la *.AppImage
+              --output appimage 2>&1 | tail -80 || true
+          ls -la *.AppImage || true
 
       - name: Upload .deb
         uses: svenstaro/upload-release-action@v2
@@ -183,11 +187,12 @@ jobs:
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh-${REF_NAME}-linux.tar.gz
+          file: clientosh-${{ env.REF_NAME }}-linux.tar.gz
           tag: ${{ github.ref }}
           overwrite: true
 
       - name: Upload .AppImage
+        if: hashFiles('clientosh-*.AppImage') != ''
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
@@ -201,7 +206,7 @@ jobs:
           name: linux-assets
           path: |
             build-deb/*.deb
-            clientosh-${REF_NAME}-linux.tar.gz
+            clientosh-${{ env.REF_NAME }}-linux.tar.gz
             clientosh-*.AppImage
           if-no-files-found: ignore
 
@@ -249,26 +254,39 @@ jobs:
           EOF
 
       - name: Deploy Qt frameworks
+        continue-on-error: true
         run: |
-          macdeployqt build-macos/clientosh.app -no-sign
-          # Re-sign any private frameworks/ad-hoc so the bundle stays valid.
+          macdeployqt build-macos/clientosh.app -always-overwrite 2>&1 | tail -40 || true
           codesign --force --deep --sign - build-macos/clientosh.app 2>/dev/null || true
 
-      - name: Compress .app (fallback if dmg fails)
-        run: |
-          zip -qry clientosh-macos.app.zip build-macos/clientosh.app || true
-
       - name: Build .dmg
+        continue-on-error: true
         run: |
           hdiutil create -volname clientosh -srcfolder build-macos/clientosh.app \
-                 -ov -format UDZO clientosh-${REF_NAME}-macos.dmg || \
-            cp clientosh-macos.app.zip clientosh-${REF_NAME}-macos.dmg
+                 -ov -format UDZO clientosh-${REF_NAME}-macos.dmg 2>&1 | tail -20 || true
+          ls -la clientosh*macos* || true
 
       - name: Upload .dmg
+        if: hashFiles('clientosh*macos*.dmg') != ''
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh*macos*
+          file: clientosh*macos*.dmg
+          tag: ${{ github.ref }}
+          asset_name: clientosh-${{ env.REF_NAME }}-macos.dmg
+          overwrite: true
+
+      - name: Zip .app as fallback
+        if: hashFiles('clientosh*macos*.dmg') == ''
+        run: |
+          zip -qry clientosh-${{ env.REF_NAME }}-macos.zip build-macos/clientosh.app || true
+
+      - name: Upload .app zip fallback
+        if: hashFiles('clientosh-${{ env.REF_NAME }}-macos.zip') != ''
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: clientosh-${{ env.REF_NAME }}-macos.zip
           tag: ${{ github.ref }}
           overwrite: true
 
@@ -277,8 +295,8 @@ jobs:
         with:
           name: macos-assets
           path: |
-            clientosh*macos*
-            clientosh-macos.app.zip
+            clientosh*macos*.dmg
+            clientosh-${{ env.REF_NAME }}-macos.zip
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------

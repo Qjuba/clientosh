@@ -112,12 +112,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential cmake pkg-config dpkg-dev \
             qt6-base-dev libqt6svg6-dev libssh-dev libssl-dev \
+            libgl1-mesa-dev libegl1-mesa-dev \
             imagemagick libfuse2 file
 
       - name: Configure
         run: cmake -S . -B build-deb -DCMAKE_BUILD_TYPE=Release \
-                 -DCMAKE_INSTALL_PREFIX=/usr \
-                 -DQt6_DIR=/usr/lib/x86_64-linux-gnu/cmake/Qt6
+                 -DCMAKE_INSTALL_PREFIX=/usr
 
       - name: Build
         run: cmake --build build-deb -j "$(nproc)"

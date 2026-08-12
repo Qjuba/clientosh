@@ -29,6 +29,12 @@ RequestExecutionLevel admin
 ; Modern UI
 !include "MUI2.nsh"
 
+; Use the app icon in the installer MUI pages (welcome/finish), and the same
+; .ico in shortcuts / uninstaller entries at runtime. Must be set BEFORE
+; MUI_LANGUAGE, otherwise MUI2 defines these itself and we get "already defined".
+!define MUI_ICON   "@ICO_DIR@"
+!define MUI_UNICON "@ICO_DIR@"
+
 ; ---- UI pages ----
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "@LICENSE_DIR@"
@@ -47,11 +53,6 @@ Name "${APP_NAME} ${APP_VERSION}"
 BrandingText "${APP_PUBLISHER}"
 Icon "@ICO_DIR@"
 UninstallIcon "@ICO_DIR@"
-
-; Use the app icon in the installer MUI pages (welcome/finish), and the same
-; .ico in shortcuts / uninstaller entries at runtime.
-!define MUI_ICON   "@ICO_DIR@"
-!define MUI_UNICON "@ICO_DIR@"
 
 ; ---- Version info embedded in the installer EXE ----
 VIProductVersion "${APP_VERSION}.0"

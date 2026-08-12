@@ -1,14 +1,15 @@
 ; ============================================================
-;  clientosh – Inno Setup Script
-;  Output: clientosh-1.0.0-setup.exe
+;  clientosh – Inno Setup Script (generated from the .in template)
+;  Version comes from CMakeLists.txt — do not edit version here.
+;  Output: clientosh-@APP_VERSION@-setup.exe
 ; ============================================================
 
 #define AppName      "clientosh"
-#define AppVersion   "1.0.0"
+#define AppVersion   "@APP_VERSION@"
 #define AppPublisher "clientosh"
 #define AppURL       "https://github.com/clientosh/clientosh"
 #define AppExeName   "clientosh.exe"
-#define BuildDir     "..\build"
+#define BuildDir     "@BUILD_DIR@"
 
 [Setup]
 AppId={{B7A3C1D2-4E5F-4A6B-8C9D-0E1F2A3B4C5D}
@@ -21,10 +22,10 @@ AppUpdatesURL={#AppURL}
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 AllowNoIcons=yes
-LicenseFile=..\LICENSE
-OutputDir=..
+LicenseFile=@LICENSE_DIR@
+OutputDir=@OUT_DIR@
 OutputBaseFilename=clientosh-{#AppVersion}-setup
-SetupIconFile=..\packaging\clientosh.ico
+SetupIconFile=@ICO_DIR@
 UninstallDisplayIcon={app}\clientosh.ico
 UninstallDisplayName={#AppName} {#AppVersion}
 Compression=lzma2/ultra64
@@ -52,7 +53,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#BuildDir}\clientosh.exe";       DestDir: "{app}"; Flags: ignoreversion
 
 ; Application icon (used by shortcuts / uninstaller display)
-Source: "..\packaging\clientosh.ico";      DestDir: "{app}"; Flags: ignoreversion
+Source: "@ICO_DIR@";                        DestDir: "{app}"; Flags: ignoreversion
 
 ; Qt6 DLLs
 Source: "{#BuildDir}\Qt6Core.dll";          DestDir: "{app}"; Flags: ignoreversion

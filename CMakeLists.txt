@@ -9,6 +9,38 @@ set(CMAKE_AUTOUIC ON)
 
 include(GNUInstallDirs)
 
+# The Windows resource file and the NSIS/Inno installer scripts are generated
+# from .in templates so the version lives only in the "VERSION" argument above.
+# Bump the version in project(...) and every artifact follows automatically.
+if(WIN32)
+    set(CLIENTOSH_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/installer")
+
+    # Absolute (backslash) paths so the generated NSIS/Inno scripts work from any
+    # working directory and on CI build machines.
+    file(TO_CMAKE_PATH "${CMAKE_CURRENT_SOURCE_DIR}" CLIENTOSH_SOURCE_CMAKE)
+    file(TO_CMAKE_PATH "${CMAKE_CURRENT_BINARY_DIR}" CLIENTOSH_BINARY_CMAKE)
+    string(REPLACE "/" "\\\\" CLIENTOSH_SOURCE_WIN "${CLIENTOSH_SOURCE_CMAKE}")
+    string(REPLACE "/" "\\\\" CLIENTOSH_BINARY_WIN "${CLIENTOSH_BINARY_CMAKE}")
+
+    # Substitution values consumed by the *.in templates (@ONLY).
+    set(APP_VERSION   "${PROJECT_VERSION}")
+    set(BUILD_DIR     "${CLIENTOSH_BINARY_WIN}")
+    set(OUT_DIR       "${CLIENTOSH_SOURCE_WIN}")
+    set(LICENSE_DIR   "${CLIENTOSH_SOURCE_WIN}\\LICENSE")
+    set(ICO_DIR       "${CLIENTOSH_SOURCE_WIN}\\packaging\\clientosh.ico")
+    # windres/rc.exe resolve resource paths against the working directory, so
+    # pass the app icon as an absolute path using plain forward slashes.
+    set(CLIENTOSH_ICO_ABS "${CMAKE_CURRENT_SOURCE_DIR}/packaging/clientosh.ico")
+
+    configure_file(clientosh.rc.in "${CLIENTOSH_GENERATED_DIR}/clientosh.rc" @ONLY)
+    configure_file(packaging/clientosh_installer.nsi.in
+                   "${CLIENTOSH_GENERATED_DIR}/clientosh_installer.nsi" @ONLY)
+    configure_file(packaging/clientosh_installer.iss.in
+                   "${CLIENTOSH_GENERATED_DIR}/clientosh_installer.iss" @ONLY)
+else()
+    set(CLIENTOSH_GENERATED_DIR "")
+endif()
+
 find_package(Qt6 REQUIRED COMPONENTS Widgets Network Svg)
 
 # ---- libssh (pkg-config, LIBSSH_ROOT, or system paths) ----
@@ -121,7 +153,7 @@ add_executable(clientosh
     src/ui/Motion.h
     src/ui/Motion.cpp
     resources.qrc
-    $<$<BOOL:${WIN32}>:clientosh.rc>
+    $<$<BOOL:${WIN32}>:${CLIENTOSH_GENERATED_DIR}/clientosh.rc>
 )
 
 target_include_directories(clientosh PRIVATE
@@ -316,24 +348,6 @@ if(UNIX AND NOT APPLE)
     set(CPACK_DEBIAN_PACKAGE_DEPENDS
         "libqt6widgets6 | libqt6widgets6t64, libqt6network6 | libqt6network6t64, libqt6svg6 | libqt6svg6t64, libssh-4, libssl3"
     )
-endif()
-
-# ---- MSI (WIX) on Windows ----
-# Activated explicitly (e.g. CLI: -DCPACK_GENERATOR=WIX, or passed
-# CPACK_WIX_UPGRADE_GUID) to build an enterprise .msi without changing the
-# default DEB behavior on Linux.
-if(WIN32 AND CPACK_GENERATOR MATCHES "WIX")
-    set(CPACK_WIX_PRODUCT_NAME "clientosh")
-    set(CPACK_WIX_PRODUCT_ID "B7A3C1D2-4E5F-4A6B-8C9D-0E1F2A3B4C5D")
-    if(NOT CPACK_WIX_UPGRADE_GUID)
-        set(CPACK_WIX_UPGRADE_GUID "B7A3C1D2-4E5F-4A6B-8C9D-0E1F2A3B4C5D")
-    endif()
-    set(CPACK_WIX_PROPERTY_ARPINSTALLLOCATION "APPDIR")
-    set(CPACK_WIX_LICENSE_RTF "")
-
-    # Enable long path handling so Qt plugin DLLs install correctly.
-    set(CPACK_WIX_EXTRA_SOURCES "")
-    set(CPACK_WIX_UNINSTALL_DIRECTORIES_INSTALLER_LOCATION ON)
 endif()
 
 include(CPack)

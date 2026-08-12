@@ -145,13 +145,24 @@ sudo apt install ./build-deb/clientosh_*.deb
 
 The package is produced with CPack and installs the desktop entry, app icon, and metainfo under `/usr`.
 
-### Windows — Inno Setup installer
+### Windows — Inno Setup / NSIS installer
 
-`packaging/clientosh_installer.iss` produces `clientosh-<version>-setup.exe` (bundles Qt, libssh, OpenSSL, and plugin DLLs). Compile it with [Inno Setup](https://jrsoftware.org/isinfo.php) from the `packaging/` directory.
+CMake generates the installer scripts at configure time from `.in` templates
+(`packaging/clientosh_installer.iss.in`, `packaging/clientosh_installer.nsi.in`)
+into the build directory. They read the version and absolute build paths from
+CMake, so **the version stays a single source of truth** in `project(...)`.
 
-### Windows — NSIS build
+Inside the build directory, compile with [Inno Setup](https://jrsoftware.org/isinfo.php)
+or NSIS (`makensis`):
 
-An NSIS variant is also available at `packaging/clientosh_installer.nsi`.
+```bash
+# after cmake -S . -B build-win, the generated scripts live here:
+#   build-win/installer/clientosh_installer.iss
+#   build-win/installer/clientosh_installer.nsi
+makensis build-win/installer/clientosh_installer.nsi
+```
+
+The result is `clientosh-<version>-setup.exe` in the repo root.
 
 ---
 

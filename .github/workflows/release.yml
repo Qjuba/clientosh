@@ -43,11 +43,24 @@ jobs:
             p7zip
 
       - name: Configure
-        run: cmake -S . -B build-win -G "Ninja" -DCMAKE_BUILD_TYPE=Release \
-                 -DLIBSSH_ROOT=/mingw64
+        run: cmake -S . -B build-win -G "Ninja" -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build-win -j 4
+
+      - name: Copy libssh + runtime DLLs next to the exe
+        run: |
+          # libssh / OpenSSL / MinGW runtime must sit beside the exe for the
+          # portable zip and the NSIS/Inno installers. Copied from the MSYS2
+          # prefix (works regardless of how CMake resolved the libraries).
+          for dll in libssh.dll libcrypto-3-x64.dll libssl-3-x64.dll \
+                     zlib1.dll libgcc_s_seh-1.dll libstdc++-6.dll \
+                     libwinpthread-1.dll; do
+            if [ -f "/mingw64/bin/$dll" ]; then
+              cp "/mingw64/bin/$dll" "build-win/$dll"
+            fi
+          done
+          ls -la build-win/*.dll
 
       - name: Deploy Qt runtime (DLLs + plugins)
         run: |

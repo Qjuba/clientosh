@@ -54,7 +54,8 @@ jobs:
 
       - name: Build NSIS installer (.exe)
         run: |
-          makensis build-win/installer/clientosh_installer.nsi || true
+          makensis build-win/installer/clientosh_installer.nsi
+          ls -la clientosh-*-setup.exe
 
       - name: Build portable .zip
         run: |
@@ -64,10 +65,11 @@ jobs:
           ls -la clientosh-${REF_NAME}-win64-portable.zip
 
       - name: Upload NSIS installer
+        if: hashFiles(format('clientosh-{0}-setup.exe', env.REF_NAME)) != ''
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh-*-setup.exe
+          file: clientosh-${{ env.REF_NAME }}-setup.exe
           tag: ${{ github.ref }}
           overwrite: true
 
@@ -267,13 +269,12 @@ jobs:
           ls -la clientosh*macos* || true
 
       - name: Upload .dmg
-        if: hashFiles('clientosh*macos*.dmg') != ''
+        if: hashFiles(format('clientosh-{0}-macos.dmg', env.REF_NAME)) != ''
         uses: svenstaro/upload-release-action@v2
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh*macos*.dmg
+          file: clientosh-${{ env.REF_NAME }}-macos.dmg
           tag: ${{ github.ref }}
-          asset_name: clientosh-${{ env.REF_NAME }}-macos.dmg
           overwrite: true
 
       - name: Zip .app as fallback

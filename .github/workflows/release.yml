@@ -258,3 +258,134 @@ jobs:
           name: clientosh-macos
           path: clientosh-macos.dmg
           if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Windows: MSI installer (CPack WIX) — enterprise-style per-machine install
+  # ---------------------------------------------------------------------------
+  build-msi:
+    name: Windows (.msi)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install MSYS2 deps
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-qt6-base
+            mingw-w64-x86_64-qt6-svg
+            mingw-w64-x86_64-libssh
+            mingw-w64-x86_64-openssl
+
+      - name: Install WiX toolchain (v3)
+        run: |
+          curl -sL -o wix.exe https://github.com/wixtoolset/wix3/releases/download/wix3141rtm/wix314-binaries.zip
+          mkdir -p wix && cd wix && unzip -q ../wix.exe
+          echo "$PWD" >> "$GITHUB_PATH"
+
+      - name: Configure (enable WIX generator)
+        run: |
+          cmake -S . -B build-msi -G "Ninja" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCPACK_GENERATOR=WIX \
+            -DCPACK_WIX_UPGRADE_GUID=B7A3C1D2-4E5F-4A6B-8C9D-0E1F2A3B4C5D
+
+      - name: Build
+        run: cmake --build build-msi -j 4
+
+      - name: Deploy Qt runtime
+        run: windeployqt --no-translations --release build-msi/clientosh.exe
+
+      - name: Build MSI package (CPack)
+        run: |
+          cmake --build build-msi --target package -j 4
+
+      - name: Locate .msi
+        id: msi
+        run: |
+          file=$(find build-msi -maxdepth 2 -name '*.msi' -print -quit)
+          echo "path=$file" >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload .msi to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: ${{ steps.msi.outputs.path }}
+          tag: ${{ github.ref }}
+          asset_name: clientosh-${{ github.ref_name }}-win64.msi
+          overwrite: true
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clientosh-windows-msi
+          path: build-msi/*.msi
+          if-no-files-found: ignore
+
+  # ---------------------------------------------------------------------------
+  # Release: checksums + auto-generated release notes
+  # Gated on all installer jobs succeeding.
+  # ---------------------------------------------------------------------------
+  publish-release:
+    name: Publish checksums & release notes
+    runs-on: ubuntu-latest
+    needs: [build-windows, build-linux, build-macos, build-msi]
+    steps:
+      - name: Resolve release tag
+        id: tag
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Download all installer artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          mkdir -p dist
+          cp artifacts/* dist/ 2>/dev/null || true
+          (cd dist && sha256sum *) > checksums.txt || true
+          if [ -s checksums.txt ]; then mv checksums.txt dist/checksums.txt; fi
+          ls -la dist
+
+      - name: Upload checksums to release
+        if: hashFiles('dist/checksums.txt') != ''
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: dist/checksums.txt
+          tag: ${{ github.ref }}
+          asset_name: checksums.txt
+          overwrite: true
+
+      - name: Auto-generate release notes
+        id: notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh api repos/${{ github.repository }}/releases/generate-notes \
+            -f tag_name="${{ github.ref_name }}" \
+            --jq '.body' > body.md \
+            || echo "No auto-generated release notes available." > body.md
+          cat body.md
+          echo "notes_file=body.md" >> "$GITHUB_OUTPUT"
+
+      - name: Update release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${{ github.ref_name }}" \
+            --notes-file body.md \
+            --title "clientosh v${{ steps.tag.outputs.version }}" \
+            || true

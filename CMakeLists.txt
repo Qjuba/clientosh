@@ -318,4 +318,22 @@ if(UNIX AND NOT APPLE)
     )
 endif()
 
+# ---- MSI (WIX) on Windows ----
+# Activated explicitly (e.g. CLI: -DCPACK_GENERATOR=WIX, or passed
+# CPACK_WIX_UPGRADE_GUID) to build an enterprise .msi without changing the
+# default DEB behavior on Linux.
+if(WIN32 AND CPACK_GENERATOR MATCHES "WIX")
+    set(CPACK_WIX_PRODUCT_NAME "clientosh")
+    set(CPACK_WIX_PRODUCT_ID "B7A3C1D2-4E5F-4A6B-8C9D-0E1F2A3B4C5D")
+    if(NOT CPACK_WIX_UPGRADE_GUID)
+        set(CPACK_WIX_UPGRADE_GUID "B7A3C1D2-4E5F-4A6B-8C9D-0E1F2A3B4C5D")
+    endif()
+    set(CPACK_WIX_PROPERTY_ARPINSTALLLOCATION "APPDIR")
+    set(CPACK_WIX_LICENSE_RTF "")
+
+    # Enable long path handling so Qt plugin DLLs install correctly.
+    set(CPACK_WIX_EXTRA_SOURCES "")
+    set(CPACK_WIX_UNINSTALL_DIRECTORIES_INSTALLER_LOCATION ON)
+endif()
+
 include(CPack)

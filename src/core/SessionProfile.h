@@ -1,7 +1,12 @@
 #pragma once
 
+#include "VaultManager.h"
+
 #include <QString>
 #include <QVector>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QSettings>
 #include <QUuid>
 #include <QMetaType>
@@ -73,7 +78,8 @@ inline QString connectionModeToString(ConnectionMode mode)
     return mode == ConnectionMode::SftpOnly ? QStringLiteral("sftp") : QStringLiteral("ssh");
 }
 
-inline QVector<SessionProfile> loadProfiles()
+// ---- Legacy QSettings persistence (migration + graceful fallback) -------
+inline QVector<SessionProfile> profilesFromQSettings()
 {
     QSettings s;
     QVector<SessionProfile> out;
@@ -106,34 +112,119 @@ inline QVector<SessionProfile> loadProfiles()
     return out;
 }
 
+// ---- Vault (encrypted connects.json + keyring dbvault) --------------------
+namespace VaultPrivate {
+
+inline QJsonObject profileToJson(const SessionProfile& p)
+{
+    QJsonObject o;
+    o.insert(QStringLiteral("id"), p.id);
+    o.insert(QStringLiteral("name"), p.name);
+    o.insert(QStringLiteral("host"), p.host);
+    o.insert(QStringLiteral("port"), p.port);
+    o.insert(QStringLiteral("user"), p.user);
+    o.insert(QStringLiteral("savePassword"), p.savePassword);
+    o.insert(QStringLiteral("privateKeyPath"), p.privateKeyPath);
+    o.insert(QStringLiteral("saveKeyPassphrase"), p.saveKeyPassphrase);
+    o.insert(QStringLiteral("connectionMode"), connectionModeToString(p.connectionMode));
+    return o;
+}
+
+inline SessionProfile profileFromJson(const QJsonObject& o)
+{
+    SessionProfile p;
+    p.id = o.value(QStringLiteral("id")).toString();
+    p.name = o.value(QStringLiteral("name")).toString();
+    p.host = o.value(QStringLiteral("host")).toString();
+    p.port = o.value(QStringLiteral("port")).toInt(22);
+    p.user = o.value(QStringLiteral("user")).toString();
+    p.savePassword = o.value(QStringLiteral("savePassword")).toBool(false);
+    p.privateKeyPath = o.value(QStringLiteral("privateKeyPath")).toString();
+    p.saveKeyPassphrase = o.value(QStringLiteral("saveKeyPassphrase")).toBool(false);
+    p.connectionMode = connectionModeFromString(
+        o.value(QStringLiteral("connectionMode")).toString(QStringLiteral("ssh")));
+    if (p.id.isEmpty()) {
+        p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    }
+    return p;
+}
+
+} // namespace VaultPrivate
+
 inline void saveProfiles(const QVector<SessionProfile>& profiles)
 {
-    QSettings s;
-    s.beginWriteArray(QStringLiteral("profiles"));
-    for (int i = 0; i < profiles.size(); ++i) {
-        s.setArrayIndex(i);
-        const SessionProfile& p = profiles[i];
-        s.setValue(QStringLiteral("id"), p.id);
-        s.setValue(QStringLiteral("name"), p.name);
-        s.setValue(QStringLiteral("host"), p.host);
-        s.setValue(QStringLiteral("port"), p.port);
-        s.setValue(QStringLiteral("user"), p.user);
-        s.setValue(QStringLiteral("savePassword"), p.savePassword);
-        if (p.savePassword) {
-            s.setValue(QStringLiteral("password"), p.password);
-        } else {
-            s.remove(QStringLiteral("password"));
-        }
-        s.setValue(QStringLiteral("privateKeyPath"), p.privateKeyPath);
-        s.setValue(QStringLiteral("saveKeyPassphrase"), p.saveKeyPassphrase);
-        if (p.saveKeyPassphrase) {
-            s.setValue(QStringLiteral("keyPassphrase"), p.keyPassphrase);
-        } else {
-            s.remove(QStringLiteral("keyPassphrase"));
-        }
-        s.setValue(QStringLiteral("connectionMode"), connectionModeToString(p.connectionMode));
+    // 1) Persist non-sensitive metadata to the encrypted connects.json.
+    QJsonArray arr;
+    for (const SessionProfile& p : profiles) {
+        arr.append(VaultPrivate::profileToJson(p));
     }
-    s.endArray();
+    QJsonObject root;
+    root.insert(QStringLiteral("version"), 1);
+    root.insert(QStringLiteral("profiles"), arr);
+    const QByteArray plain = QJsonDocument(root).toJson(QJsonDocument::Compact);
+
+    VaultManager vault;
+    vault.saveConnectsJson(plain);
+
+    // 2) Store/remove sensitive fields in the keyring-protected dbvault.
+    for (const SessionProfile& p : profiles) {
+        if (p.savePassword) {
+            vault.storeSecret(p.id, QStringLiteral("password"), p.password.toUtf8());
+        } else {
+            vault.removeSecret(p.id, QStringLiteral("password"));
+        }
+        if (p.saveKeyPassphrase) {
+            vault.storeSecret(p.id, QStringLiteral("keyPassphrase"), p.keyPassphrase.toUtf8());
+        } else {
+            vault.removeSecret(p.id, QStringLiteral("keyPassphrase"));
+        }
+    }
+}
+
+inline QVector<SessionProfile> loadProfiles()
+{
+    VaultManager vault;
+
+    QByteArray plain;
+    const VaultManager::LoadOutcome oc = vault.loadConnectsJson(plain);
+
+    // First run / nothing saved yet (or legacy QSettings fallback on corruption):
+    // migrate any legacy QSettings profiles into the encrypted vault.
+    if (oc == VaultManager::LoadOutcome::NotFound || oc == VaultManager::LoadOutcome::Corrupt) {
+        QVector<SessionProfile> legacy = profilesFromQSettings();
+        if (!legacy.isEmpty()) {
+            saveProfiles(legacy);
+        }
+        return legacy;
+    }
+
+    const QJsonDocument doc = QJsonDocument::fromJson(plain);
+    if (doc.isNull() || !doc.isObject()) {
+        return {};
+    }
+    const QJsonArray arr = doc.object().value(QStringLiteral("profiles")).toArray();
+
+    QVector<SessionProfile> out;
+    out.reserve(arr.size());
+    for (const QJsonValue& v : arr) {
+        SessionProfile p = VaultPrivate::profileFromJson(v.toObject());
+        if (p.id.isEmpty()) {
+            continue;
+        }
+        // Pull sensitive material from the keyring-protected dbvault.
+        QByteArray secret;
+        if (p.savePassword && vault.retrieveSecret(p.id, QStringLiteral("password"), secret)) {
+            p.password = QString::fromUtf8(secret);
+            secret.fill('\0');
+        }
+        if (p.saveKeyPassphrase
+            && vault.retrieveSecret(p.id, QStringLiteral("keyPassphrase"), secret)) {
+            p.keyPassphrase = QString::fromUtf8(secret);
+            secret.fill('\0');
+        }
+        out.push_back(p);
+    }
+    return out;
 }
 
 inline SessionProfile makeProfile(const QString& host, int port, const QString& user,

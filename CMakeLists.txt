@@ -23,6 +23,19 @@ if(PkgConfig_FOUND AND NOT LIBSSH_ROOT)
     endif()
 endif()
 
+# ---- OpenSSL (crypto) for the vault (AES-256-GCM) ----
+# Prefer the OpenSSL that lives beside libssh (e.g. under LIBSSH_ROOT) so the
+# bundled runtime DLLs already copied next to the exe are the ones we use.
+set(OPENSSL_ROOT_DIR "" CACHE PATH "Optional OpenSSL install prefix")
+if(NOT OPENSSL_ROOT_DIR AND LIBSSH_ROOT)
+    set(OPENSSL_ROOT_DIR "${LIBSSH_ROOT}")
+endif()
+if(WIN32 AND OPENSSL_ROOT_DIR)
+    set(OPENSSL_USE_STATIC_LIBS FALSE)
+endif()
+find_package(OpenSSL REQUIRED)
+set(CLIENTOSH_OPENSSL_TARGET OpenSSL::Crypto)
+
 if(NOT CLIENTOSH_LIBSSH_TARGET)
     set(_libssh_hints)
     if(LIBSSH_ROOT)
@@ -70,6 +83,12 @@ add_executable(clientosh
     src/core/ServerStatsClient.cpp
     src/core/FontManager.h
     src/core/FontManager.cpp
+    src/core/CryptoEngine.h
+    src/core/CryptoEngine.cpp
+    src/core/KeyringAdapter.h
+    src/core/KeyringAdapter.cpp
+    src/core/VaultManager.h
+    src/core/VaultManager.cpp
     src/PanelTypes.h
     src/DropOverlay.h
     src/DropOverlay.cpp
@@ -101,10 +120,19 @@ target_link_libraries(clientosh PRIVATE
     Qt6::Network
     Qt6::Svg
     ${CLIENTOSH_LIBSSH_TARGET}
+    ${CLIENTOSH_OPENSSL_TARGET}
 )
 
+if(APPLE)
+    target_link_libraries(clientosh PRIVATE
+        "-framework Security"
+        "-framework IOKit"
+        "-framework CoreFoundation"
+    )
+endif()
+
 if(WIN32)
-    target_link_libraries(clientosh PRIVATE ws2_32)
+    target_link_libraries(clientosh PRIVATE ws2_32 advapi32)
     set_target_properties(clientosh PROPERTIES WIN32_EXECUTABLE TRUE)
 
     # Bundle runtime DLLs next to the exe when building against MSYS2/custom prefix
@@ -131,6 +159,88 @@ if(WIN32)
                 )
             endif()
         endforeach()
+    endif()
+
+    # Bundle the Qt6 runtime DLLs and the MinGW C++ runtime so the exe launches
+    # from a plain shell without the Qt toolchain on PATH.
+    get_target_property(_qt_bin_dir Qt6::Core IMPORTED_LOCATION)
+    if(_qt_bin_dir)
+        get_filename_component(_qt_bin_dir "${_qt_bin_dir}" DIRECTORY)
+    endif()
+    set(_qt_dlls
+        Qt6Core.dll
+        Qt6Gui.dll
+        Qt6Network.dll
+        Qt6Svg.dll
+        Qt6Widgets.dll
+    )
+    foreach(_dll IN LISTS _qt_dlls)
+        if(EXISTS "${_qt_bin_dir}/${_dll}")
+            add_custom_command(TARGET clientosh POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_qt_bin_dir}/${_dll}"
+                    "$<TARGET_FILE_DIR:clientosh>"
+                VERBATIM
+            )
+        endif()
+    endforeach()
+
+    # MinGW C++ runtime (from LIBSSH_ROOT when it is an MSYS2 prefix, else from
+    # the Qt toolchain) plus the Qt platform plugin.
+    set(_gcc_dlls libgcc_s_seh-1.dll libstdc++-6.dll libwinpthread-1.dll)
+    foreach(_dll IN LISTS _gcc_dlls)
+        set(_gcc_path "")
+        if(LIBSSH_ROOT AND EXISTS "${LIBSSH_ROOT}/bin/${_dll}")
+            set(_gcc_path "${LIBSSH_ROOT}/bin/${_dll}")
+        elseif(CMAKE_CXX_COMPILER)
+            get_filename_component(_gcc_dir "${CMAKE_CXX_COMPILER}" DIRECTORY)
+            if(EXISTS "${_gcc_dir}/${_dll}")
+                set(_gcc_path "${_gcc_dir}/${_dll}")
+            endif()
+        endif()
+        if(_gcc_path)
+            add_custom_command(TARGET clientosh POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${_gcc_path}" "$<TARGET_FILE_DIR:clientosh>"
+                VERBATIM
+            )
+        endif()
+    endforeach()
+
+    if(_qt_bin_dir AND EXISTS "${_qt_bin_dir}/../plugins/platforms/qwindows.dll")
+        add_custom_command(TARGET clientosh POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E make_directory
+                "$<TARGET_FILE_DIR:clientosh>/platforms"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${_qt_bin_dir}/../plugins/platforms/qwindows.dll"
+                "$<TARGET_FILE_DIR:clientosh>/platforms"
+            VERBATIM
+        )
+        # Image format plugins (PNG/ICO) used by the icon and app.
+        if(EXISTS "${_qt_bin_dir}/../plugins/imageformats")
+            add_custom_command(TARGET clientosh POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${_qt_bin_dir}/../plugins/imageformats"
+                    "$<TARGET_FILE_DIR:clientosh>/imageformats"
+                VERBATIM
+            )
+        endif()
+        if(EXISTS "${_qt_bin_dir}/../plugins/iconengines")
+            add_custom_command(TARGET clientosh POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${_qt_bin_dir}/../plugins/iconengines"
+                    "$<TARGET_FILE_DIR:clientosh>/iconengines"
+                VERBATIM
+            )
+        endif()
+        if(EXISTS "${_qt_bin_dir}/../plugins/tls")
+            add_custom_command(TARGET clientosh POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_directory
+                    "${_qt_bin_dir}/../plugins/tls"
+                    "$<TARGET_FILE_DIR:clientosh>/tls"
+                VERBATIM
+            )
+        endif()
     endif()
 elseif(APPLE)
     set_target_properties(clientosh PROPERTIES

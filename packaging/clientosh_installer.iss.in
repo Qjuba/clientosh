@@ -55,26 +55,12 @@ Source: "{#BuildDir}\clientosh.exe";       DestDir: "{app}"; Flags: ignoreversio
 ; Application icon (used by shortcuts / uninstaller display)
 Source: "@ICO_DIR@";                        DestDir: "{app}"; Flags: ignoreversion
 
-; Qt6 DLLs. Qt6OpenGL/OpenGLWidgets/opengl32sw/D3Dcompiler may be absent on
-; some Qt builds, so mark them optional (same intent as the NSIS /nonfatal).
-Source: "{#BuildDir}\Qt6Core.dll";          DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\Qt6Gui.dll";           DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\Qt6Network.dll";       DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\Qt6OpenGL.dll";        DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6OpenGLWidgets.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\Qt6Svg.dll";           DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\Qt6Widgets.dll";       DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\D3Dcompiler_47.dll";   DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#BuildDir}\opengl32sw.dll";       DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-
-; libssh + OpenSSL + MinGW runtime DLLs
-Source: "{#BuildDir}\libssh.dll";           DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\libcrypto-3-x64.dll";  DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\libssl-3-x64.dll";     DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\libgcc_s_seh-1.dll";   DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\libstdc++-6.dll";      DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\libwinpthread-1.dll";  DestDir: "{app}"; Flags: ignoreversion
-Source: "{#BuildDir}\zlib1.dll";            DestDir: "{app}"; Flags: ignoreversion
+; Bundle ALL runtime DLLs that sit beside the exe in the build dir: Qt, libssh,
+; OpenSSL, the MinGW C++ runtime, and Qt's transitive deps (e.g.
+; libdouble-conversion, ICU) that some Qt builds ship separately. Using a
+; wildcard keeps the installer correct regardless of which Qt/toolchain the
+; build used, without needing to enumerate every dependency.
+Source: "{#BuildDir}\*.dll";                DestDir: "{app}"; Flags: ignoreversion
 
 ; Qt platform plugin
 Source: "{#BuildDir}\platforms\*.dll";                      DestDir: "{app}\platforms";    Flags: ignoreversion

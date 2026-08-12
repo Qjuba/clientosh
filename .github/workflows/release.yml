@@ -14,16 +14,20 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Windows: NSIS .exe installer + portable .zip + raw .exe
+  # Windows: Inno Setup .exe installer + portable .zip + raw .exe
   # ---------------------------------------------------------------------------
   build-windows:
-    name: Windows (installer .exe + portable .zip)
+    name: Windows (Inno installer .exe + portable .zip)
     runs-on: windows-latest
     defaults:
       run:
         shell: msys2 {0}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
 
       - name: Install MSYS2 deps
         uses: msys2/setup-msys2@v2
@@ -72,13 +76,13 @@ jobs:
         run: |
           windeployqt --no-translations --release build-win/clientosh.exe || true
 
-      - name: Build NSIS installer (.exe)
+      - name: Build Inno Setup installer (.exe)
         run: |
-          makensis build-win/installer/clientosh_installer.nsi
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" build-win/installer/clientosh_installer.iss
           ls -la clientosh-*-setup.exe
 
       - name: Resolve installer filename
-        # The NSIS template names the output clientosh-<VERSION>-setup.exe with
+        # The Inno template names the output clientosh-<VERSION>-setup.exe with
         # the bare version (no "v" prefix), unlike REF_NAME (e.g. v1.0.0). Expose
         # the exact filename so the upload step and its guard reference it.
         run: |
@@ -91,7 +95,7 @@ jobs:
           powershell -NoProfile -Command "Compress-Archive -Path 'build-win/*' -DestinationPath 'clientosh-${REF_NAME}-win64-portable.zip' -Force"
           ls -la clientosh-${REF_NAME}-win64-portable.zip
 
-      - name: Upload NSIS installer
+      - name: Upload Inno installer
         if: hashFiles(env.SETUP_NAME) != ''
         uses: svenstaro/upload-release-action@v2
         with:

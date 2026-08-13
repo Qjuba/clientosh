@@ -298,6 +298,21 @@ if(WIN32)
             )
         endif()
     endif()
+
+    # Deploy the complete Qt runtime (platforms/styles/iconengines/tls/imageformats
+    # plugins plus any extra core DLLs such as opengl32sw) via windeployqt when it
+    # ships with the Qt used for this build. This mirrors the release CI and makes
+    # the built exe a self-contained, correctly-rendering bundle regardless of which
+    # Qt toolchain is on PATH during the build.
+    if(_qt_bin_dir AND EXISTS "${_qt_bin_dir}/windeployqt.exe")
+        add_custom_command(TARGET clientosh POST_BUILD
+            COMMAND "${_qt_bin_dir}/windeployqt.exe"
+                    --no-translations --release
+                    "$<TARGET_FILE_DIR:clientosh>/clientosh.exe"
+            COMMAND ${CMAKE_COMMAND} -E echo "windeployqt: bundled Qt runtime from ${_qt_bin_dir}"
+            VERBATIM
+        )
+    endif()
 elseif(APPLE)
     set_target_properties(clientosh PROPERTIES
         MACOSX_BUNDLE FALSE

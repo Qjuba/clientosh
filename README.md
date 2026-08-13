@@ -115,10 +115,28 @@ cmake -S . -B build-linux -DCMAKE_PREFIX_PATH=/usr            # Debian/Ubuntu (u
 cmake -S . -B build-linux -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x/gcc_64
 ```
 
-### Windows — Qt + MinGW
+### Windows — Qt + MinGW (pinned Qt 6.9.2)
+
+The recommended way is the CMake preset, which pins the build to **exactly Qt 6.9.2**
+plus its matching **MinGW 13.1.0** toolchain and libssh/OpenSSL from MSYS2 — the same
+set the release CI and the locally tested kit use. This keeps the rendered app and
+its behavior identical to the released build (the rolling MSYS2 Qt renders and behaves
+differently, which is why the app can look off / misbehave when built against it).
 
 ```powershell
-cmake -S . -B build-win -G "Ninja" `
+cmake --preset windows-qt692-mingw   # Qt 6.9.2 + MinGW 13.1, outputs to build-win/
+cmake --build  --preset windows-qt692-mingw
+.\build-win\clientosh.exe
+
+# Optional: repackage the installer after a rebuild
+& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" build-win\installer\clientosh_installer.iss
+```
+
+The same configuration spelled out manually:
+
+```powershell
+cmake -S . -B build-win -G "MinGW Makefiles" `
+  -DCMAKE_MAKE_PROGRAM="C:/Qt/Tools/mingw1310_64/bin/mingw32-make.exe" `
   -DCMAKE_PREFIX_PATH="C:/Qt/6.9.2/mingw_64" `
   -DCMAKE_C_COMPILER="C:/Qt/Tools/mingw1310_64/bin/gcc.exe" `
   -DCMAKE_CXX_COMPILER="C:/Qt/Tools/mingw1310_64/bin/g++.exe" `
@@ -128,9 +146,11 @@ cmake --build build-win
 .\build-win\clientosh.exe
 ```
 
-`LIBSSH_ROOT` is optional when pkg-config can find libssh. When set, CMake also copies the required runtime DLLs (libssh, OpenSSL, MinGW runtime) next to the executable.
+> **Note** — build from a shell where the Qt toolchain `bin` is on `PATH`
+> (`C:/Qt/Tools/mingw1310_64/bin`), otherwise CMake's compiler test can fail on the
+> plain PowerShell prompt. The preset above injects it automatically.
 
-> **Tip** — use `windeployqt --release build-win\clientosh.exe` to gather the Qt runtime files for redistribution.
+`LIBSSH_ROOT` is optional when pkg-config can find libssh. When set, CMake also copies the required runtime DLLs (libssh, OpenSSL, MinGW runtime) next to the executable. The build additionally runs `windeployqt --release` as a post-build step to bundle the full Qt runtime (platforms, styles, imageformats, tls, …) so the exe is self-contained.
 
 ---
 

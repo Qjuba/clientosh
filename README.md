@@ -47,7 +47,7 @@
 <p align="center"><img src="preview/terminalpage.jpg" alt="clientosh terminal" width="820"/></p>
 <p align="center"><em>A live terminal pane with scrollback, keyword highlighting, and the dark monospace look.</em></p>
 
-<p align="center"><img src="preview/terminalsplitterminalpage.jpg" alt="Split terminal workspace" width="820"/></p>
+<p align="center"><img src="preview/terminalsplitterminalpage.png" alt="Split terminal workspace" width="820"/></p>
 <p align="center"><em>Two terminals tiled in one window — no separate OS windows to juggle.</em></p>
 
 <p align="center"><img src="preview/terminalsplitsftppage.jpg" alt="Terminal + SFTP split" width="820"/></p>

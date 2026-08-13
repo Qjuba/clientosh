@@ -5,7 +5,7 @@
 <h1 align="center">clientosh</h1>
 
 <p align="center">
-  <b>A raw, dark-gray SSH client with a split-pane terminal — tired of tab-juggling, made for people who live on the command line.</b>
+  <b>A raw, dark-gray SSH client with a split-pane terminal tired of tab-juggling, made for people who live on the command line.</b>
 </p>
 
 <p align="center">
@@ -102,34 +102,49 @@
 
 <br/>
 
-```
-                    ┌────────────────────────────────────────────┐
-                    │                 MainWindow                 │
-                    │   TopNavBar    ┌──── DashboardPage ────┐   │
-                    └───────────────┬┴───────────────────────┴───┘
-                                    │
-                      ┌─────────────▼─────────────┐
-                      │      SessionWorkspace      │  split-pane docking
-                      │  (QSplitter tree, tiled)   │  drag → edge zones
-                      └─────┬────────────────┬────┘
-                            │                │
-                ┌───────────▼───┐    ┌───────▼──────────┐
-                │   PaneFrame    │    │   PaneFrame       │
-                │  (Terminal)    │    │   (SftpWindow)    │
-                └───────┬───────┘    └───────┬───────────┘
-                        │                    │
-        ┌───────────────▼───────────────┐   ┌▼─────────────────────────┐
-        │        core backend           │   │  SftpClient (worker)     │
-        │  SshSession   QThread          │   │  SftpCrossTransfer       │
-        │  SessionManager                │   │  (server→server staging) │
-        │  ServerStatsClient (worker)    │   │                          │
-        │  FontManager                   │   └──────────────────────────┘
-        └───────────────┬───────────────┘
-                        │
-        ┌───────────────▼───────────────┐
-        │      VaultManager / Crypto     │  AES-256-GCM at rest
-        │      KeyringAdapter            │  CredMgr / Keychain / Secret
-        └────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph UI["MainWindow"]
+        direction TB
+        TopNavBar["TopNavBar"]
+        Dashboard["DashboardPage"]
+        MainWindow["MainWindow"]
+    end
+
+    MainWindow --> TopNavBar
+    MainWindow --> Dashboard
+
+    TopNavBar --> SW
+    Dashboard --> SW
+    SW["SessionWorkspace<br/>(QSplitter tree, tiled)"]:::ws
+
+    SW -->|"drag → edge zones"| FrameTerm
+    SW -->|"drag → edge zones"| FrameSftp
+
+    subgraph Backend["core — worker threads"]
+        direction TB
+        Ssh["SshSession (QThread)"]
+        Mgr["SessionManager"]
+        Stats["ServerStatsClient (worker)"]
+        Font["FontManager"]
+        Sftp["SftpClient (worker)"]
+        Cross["SftpCrossTransfer<br/>(server→server staging)"]
+        Ssh --> Mgr
+        Stats --> Mgr
+        Sftp --> Mgr
+        Cross --> Mgr
+    end
+
+    FrameTerm --> Ssh
+    FrameSftp --> Sftp
+    FrameSftp --> Cross
+
+    subgraph Vault["VaultManager / Crypto — AES-256-GCM at rest"]
+        VaultMgr["KeyringAdapter"]
+        VaultMgr --- K["Credential Manager · Keychain · Secret Service"]
+    end
+
+    Mgr --> VaultMgr
 ```
 
 **Threading model** — every network concern (auth, shell I/O, SFTP, stats polling) runs on a dedicated worker thread. The GUI thread issues commands and consumes queued signals; it never blocks on a socket.

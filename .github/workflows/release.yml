@@ -39,16 +39,39 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-qt6-base
-            mingw-w64-x86_64-qt6-svg
             mingw-w64-x86_64-libssh
             mingw-w64-x86_64-openssl
             mingw-w64-x86_64-ntldd
             mingw-w64-x86_64-nsis
             p7zip
 
+      # Build against the exact Qt version used locally (C:\Qt\6.9.2\mingw_64).
+      # The MSYS2 rolling Qt (mingw-w64-x86_64-qt6-*) tracks the newest Qt, which
+      # renders/looks and behaves differently from the pinned local kit. Installing
+      # Qt 6.9.2 plus its matching MinGW 13.1.0 toolchain via aqtinstall makes the
+      # CI build byte-for-byte the same Qt/Kits the app was developed and tested on.
+      - name: Install pinned Qt 6.9.2 + MinGW 13.1
+        shell: pwsh
+        run: |
+          $QtRoot = Join-Path $env:RUNNER_TEMP 'Qt'
+          python -m pip install --upgrade aqtinstall
+          python -m aqt install-qt windows desktop 6.9.2 win64_mingw -O $QtRoot
+          python -m aqt install-tool windows desktop tools_mingw1310 qt.tools.win64_mingw1310 -O $QtRoot
+          $qtPrefix = "$QtRoot\6.9.2\mingw_64"
+          $mingwRoot = "$QtRoot\Tools\mingw1310_64"
+          "QT_ROOT=$qtPrefix"           >> $env:GITHUB_ENV
+          "QT_BIN_DIR=$qtPrefix\bin"    >> $env:GITHUB_ENV
+          "MINGW_ROOT=$mingwRoot"       >> $env:GITHUB_ENV
+          Get-ChildItem $mingwRoot\bin\g++.exe, $qtPrefix\bin\windeployqt.exe | Select-Object FullName
+
       - name: Configure
-        run: cmake -S . -B build-win -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+        run: |
+          QT_UNIX="$(cygpath -u "$QT_ROOT")"
+          MINGW_UNIX="$(cygpath -u "$MINGW_ROOT")"
+          cmake -S . -B build-win -G "Ninja" -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_UNIX" \
+            -DCMAKE_C_COMPILER="$MINGW_UNIX/bin/gcc" \
+            -DCMAKE_CXX_COMPILER="$MINGW_UNIX/bin/g++"
 
       - name: Build
         run: cmake --build build-win -j 4
@@ -74,7 +97,7 @@ jobs:
 
       - name: Deploy Qt runtime (DLLs + plugins)
         run: |
-          windeployqt --no-translations --release build-win/clientosh.exe || true
+          "$QT_BIN_DIR/windeployqt" --no-translations --release build-win/clientosh.exe || true
 
       - name: Build Inno Setup installer (.exe)
         run: |

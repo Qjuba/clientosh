@@ -38,14 +38,14 @@
 
 ## 📸 &nbsp;Showcase
 
+<p align="center"><img src="preview/splitgif.gif" alt="Split-pane demo" width="820"/></p>
+<p align="center"><em>Drag a session chip onto another pane and watch the live split-preview — then drop into any edge.</em></p>
+
 <p align="center"><img src="preview/mainpage.jpg" alt="clientosh dashboard" width="820"/></p>
 <p align="center"><em>The dashboard — your launchpad for every session.</em></p>
 
 <p align="center"><img src="preview/terminalpage.jpg" alt="clientosh terminal" width="820"/></p>
 <p align="center"><em>A live terminal pane with scrollback, keyword highlighting, and the dark monospace look.</em></p>
-
-<p align="center"><img src="preview/splitgif.gif" alt="Split-pane demo" width="820"/></p>
-<p align="center"><em>Drag a session chip onto another pane and watch the live split-preview — then drop into any edge.</em></p>
 
 <p align="center"><img src="preview/terminalsplitterminalpage.jpg" alt="Split terminal workspace" width="820"/></p>
 <p align="center"><em>Two terminals tiled in one window — no separate OS windows to juggle.</em></p>
@@ -59,6 +59,7 @@
 
 ## ✨ &nbsp;Key Features
 
+- **🪶 Lightweight & native** — idles at roughly **~30 MB RAM**, because clientosh is written native against **Qt 6 widgets in C++** — no Electron, no bundled Chromium, no JVM. It launches in a blink and stays out of your memory even with many panes open.
 - **🧱 Split-pane workspace, single window** — drag a session chip onto a live pane to preview the viewport, then drop onto a `Left` / `Right` / `Top` / `Bottom` zone to dock. Terminal **and** SFTP panes share one OS window with animated, eased splitter morphing.
 - **🔒 Layer-0 secure vault** — session metadata and secrets are encrypted at rest with **AES-256-GCM** (OpenSSL EVP), backed by your OS keyring: **Windows Credential Manager, macOS Keychain, and Secret Service (libsecret)** — with a machine-bound encrypted-file fallback that keeps things working headless.
 - **🗝️ Battle-tested private-key auth** — import and save SSH keys *into the keyring itself*, pick them from a dropdown, and decrypt passphrase-protected keys on the fly. Decrypted payloads are **zeroed in memory** after use.
@@ -71,7 +72,7 @@
 - **🎨 Raw dark UI with motion** — flat, high-contrast monospace theme with subtle eased glows and hover fills (`src/ui/Motion`), plus a light theme, adjustable fonts, and optional blurred background images.
 - **🔧 Single-source-of-truth builds** — version bumped once in `project(...)` flows through the About tab, Windows RC resources, NSIS/Inno installers, and package metadata automatically.
 
-> 💡 **What makes clientosh "fast"?** Network I/O never touches the UI thread, the vault decrypts near-instantly via an in-memory machine-bound key (no keyring/DPAPI latency at launch), and animations are vsync-paced with no continuous timers while idle.
+> 💡 **What makes clientosh "fast"?** It's a **native Qt 6 / C++** app — no Electron or web-view overhead — so it's snappy to launch and sips about **~30 MB RAM**. Network I/O never touches the UI thread, the vault decrypts near-instantly via an in-memory machine-bound key (no keyring/DPAPI latency at launch), and animations are vsync-paced with no continuous timers while idle.
 
 <br/>
 

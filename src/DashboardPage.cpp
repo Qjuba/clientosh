@@ -4,11 +4,18 @@
 #include "core/AppSettings.h"
 #include "core/FontManager.h"
 #include "core/SessionManager.h"
+#include "core/sync/SyncConfig.h"
+#include "core/sync/SyncController.h"
+#include "core/sync/SyncKey.h"
+#include "core/sync/SyncPayload.h"
+#include "core/VaultManager.h"
 #include "ui/Motion.h"
 
 #include <QAbstractItemView>
+#include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
+#include <QClipboard>
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDateTime>
@@ -23,6 +30,8 @@
 #include <QJsonObject>
 #include <QMessageBox>
 #include <QFrame>
+#include <QSysInfo>
+#include <QUuid>
 #include <QHeaderView>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -42,6 +51,7 @@
 #include <QStyle>
 #include <QTableWidget>
 #include <QToolButton>
+#include <QTimer>
 #include <QUrl>
 #include <QVBoxLayout>
 
@@ -306,7 +316,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_settingsNav->addItems({QStringLiteral("General"), QStringLiteral("Appearance"),
                              QStringLiteral("Performance"), QStringLiteral("SSH / Sessions"),
                              QStringLiteral("SFTP"), QStringLiteral("Shortcuts"),
-                             QStringLiteral("About")});
+                             QStringLiteral("Sync"), QStringLiteral("About")});
     m_settingsNav->setCurrentRow(0);
 
     m_settingsStack = new QStackedWidget(setBody);
@@ -727,6 +737,138 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         makeScrollPage(sec);
     }
 
+    // Sync (GitHub Gist)
+    {
+        QWidget* sec = buildSettingsSection(QStringLiteral("Sync · GitHub Gist"), m_settingsStack);
+        auto* sLay = qobject_cast<QVBoxLayout*>(sec->layout());
+        if (!sLay) {
+            makeScrollPage(sec);
+        } else {
+            auto* statusHint = new QLabel(
+                QStringLiteral(
+                    "Synchronize saved sessions between machines via a private GitHub Gist.\n"
+                    "Everything is encrypted locally before upload — GitHub only stores ciphertext."),
+                sec);
+            statusHint->setObjectName(QStringLiteral("dashHint"));
+            statusHint->setWordWrap(true);
+            sLay->addWidget(statusHint);
+
+            m_syncEnabledCheck = new QCheckBox(QStringLiteral("Enable synchronization"), sec);
+            m_syncEnabledHint = new QLabel(
+                QStringLiteral("When enabled, changes are encrypted and pushed to the gist; other devices "
+                               "pull new revisions automatically. Turn off to keep working locally."),
+                sec);
+            m_syncEnabledHint->setObjectName(QStringLiteral("dashHint"));
+            m_syncEnabledHint->setWordWrap(true);
+
+            m_syncTokenEdit = new QLineEdit(sec);
+            m_syncTokenEdit->setPlaceholderText(QStringLiteral("GitHub token (classic or fine-grained, `gist` scope)"));
+            m_syncTokenEdit->setEchoMode(QLineEdit::Password);
+            m_syncTestBtn = new QPushButton(QStringLiteral("Test token"), sec);
+            m_syncTestBtn->setObjectName(QStringLiteral("dashButton"));
+            m_syncTestBtn->setCursor(Qt::PointingHandCursor);
+            m_syncTestBtn->setFocusPolicy(Qt::NoFocus);
+            m_syncTokenStatusLabel = new QLabel(sec);
+            m_syncTokenStatusLabel->setObjectName(QStringLiteral("dashHint"));
+            m_syncTokenStatusLabel->setWordWrap(true);
+
+            m_syncCreateBtn = new QPushButton(QStringLiteral("Create sync · Computer 1"), sec);
+            m_syncCreateBtn->setObjectName(QStringLiteral("dashPrimary"));
+            m_syncCreateBtn->setCursor(Qt::PointingHandCursor);
+            m_syncCreateBtn->setFocusPolicy(Qt::NoFocus);
+            m_syncCreateBtn->setIcon(QIcon(QStringLiteral(":/icons/cloud.svg")));
+            m_syncCreateBtn->setIconSize(QSize(13, 13));
+
+            // Display the current portable key (what gets shared to Computer 2)
+            m_syncKeyDisplay = new QLineEdit(sec);
+            m_syncKeyDisplay->setReadOnly(true);
+            m_syncKeyDisplay->setObjectName(QStringLiteral("syncKeyDisplay"));
+            m_syncCopyKeyBtn = new QPushButton(QStringLiteral("Copy key"), sec);
+            m_syncCopyKeyBtn->setObjectName(QStringLiteral("dashButton"));
+            m_syncCopyKeyBtn->setCursor(Qt::PointingHandCursor);
+            m_syncCopyKeyBtn->setFocusPolicy(Qt::NoFocus);
+
+            m_syncKeyEdit = new QLineEdit(sec);
+            m_syncKeyEdit->setPlaceholderText(QStringLiteral("Paste sync key received from Computer 1"));
+            m_syncJoinBtn = new QPushButton(QStringLiteral("Connect · Computer 2"), sec);
+            m_syncJoinBtn->setObjectName(QStringLiteral("dashButton"));
+            m_syncJoinBtn->setCursor(Qt::PointingHandCursor);
+            m_syncJoinBtn->setFocusPolicy(Qt::NoFocus);
+
+            m_syncPollInterval = new QSpinBox(sec);
+            m_syncPollInterval->setRange(10, 3600);
+            m_syncPollInterval->setSuffix(QStringLiteral(" s"));
+            addSettingsField(sec, QStringLiteral("Poll interval (check for newer revisions)"), m_syncPollInterval);
+
+            m_syncSyncNowBtn = new QPushButton(QStringLiteral("Sync now"), sec);
+            m_syncSyncNowBtn->setObjectName(QStringLiteral("dashButton"));
+            m_syncSyncNowBtn->setCursor(Qt::PointingHandCursor);
+            m_syncSyncNowBtn->setFocusPolicy(Qt::NoFocus);
+            m_syncSyncNowBtn->setIcon(QIcon(QStringLiteral(":/icons/sync.svg")));
+            m_syncSyncNowBtn->setIconSize(QSize(13, 13));
+
+            m_syncDisableBtn = new QPushButton(QStringLiteral("Disable synchronization"), sec);
+            m_syncDisableBtn->setObjectName(QStringLiteral("dashButton"));
+            m_syncDisableBtn->setCursor(Qt::PointingHandCursor);
+            m_syncDisableBtn->setFocusPolicy(Qt::NoFocus);
+
+            m_syncGistIdLabel = new QLabel(sec);
+            m_syncGistIdLabel->setObjectName(QStringLiteral("dashHint"));
+            m_syncGistIdLabel->setWordWrap(true);
+            m_syncGistIdLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+
+            m_syncStatus = new QLabel(QStringLiteral("Sync is disabled. Enable it to share sessions between devices."), sec);
+            m_syncStatus->setObjectName(QStringLiteral("dashHint"));
+            m_syncStatus->setWordWrap(true);
+
+            // Layout the fields
+            auto* enabledRow = new QHBoxLayout;
+            enabledRow->addWidget(m_syncEnabledCheck, 1);
+            sLay->addSpacing(6);
+            sLay->addLayout(enabledRow);
+            sLay->addWidget(m_syncEnabledHint);
+
+            auto* tokenRowTop = new QHBoxLayout;
+            tokenRowTop->addWidget(m_syncTokenEdit, 1);
+            tokenRowTop->addWidget(m_syncTestBtn);
+            sLay->addSpacing(6);
+            sLay->addWidget(new QLabel(QStringLiteral("GitHub token (kept only on this machine)"), sec));
+            sLay->addLayout(tokenRowTop);
+            sLay->addWidget(m_syncTokenStatusLabel);
+
+            sLay->addSpacing(8);
+            sLay->addWidget(m_syncCreateBtn);
+
+            auto* keyDisplayRow = new QHBoxLayout;
+            keyDisplayRow->addWidget(m_syncKeyDisplay, 1);
+            keyDisplayRow->addWidget(m_syncCopyKeyBtn);
+            sLay->addSpacing(6);
+            sLay->addWidget(new QLabel(QStringLiteral("Current sync key — copy this to Computer 2"), sec));
+            sLay->addLayout(keyDisplayRow);
+
+            auto* keyInputRow = new QHBoxLayout;
+            keyInputRow->addWidget(m_syncKeyEdit, 1);
+            keyInputRow->addWidget(m_syncJoinBtn);
+            sLay->addSpacing(8);
+            sLay->addWidget(new QLabel(QStringLiteral("Join from Computer 2 (paste key above + provide your own token)"), sec));
+            sLay->addLayout(keyInputRow);
+
+            // Poll interval is added via addSettingsField above; add action rows after it.
+            sLay->addSpacing(4);
+
+            auto* actions = new QHBoxLayout;
+            actions->addWidget(m_syncSyncNowBtn);
+            actions->addStretch(1);
+            actions->addWidget(m_syncDisableBtn);
+            sLay->addLayout(actions);
+
+            sLay->addWidget(m_syncGistIdLabel);
+            sLay->addWidget(m_syncStatus);
+
+            makeScrollPage(sec);
+        }
+    }
+
     // About
     {
         QWidget* sec = buildSettingsSection(QStringLiteral("About"), m_settingsStack);
@@ -959,6 +1101,92 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     connect(m_settingsAnimations, &QCheckBox::toggled, this, [](bool on) {
         Motion::setEnabled(on);
     });
+    // ---- Sync (background controller, never blocks UI) ---------------
+    m_sync = new SyncController(this);
+    {
+        const QString deviceId = QStringLiteral("device-%1").arg(
+            QUuid::createUuid().toString(QUuid::WithoutBraces).left(10));
+        const QString raw = QString::fromLatin1(qgetenv("COMPUTERNAME"));
+        const QString fallback = QSysInfo::machineHostName().trimmed();
+        const QString hostLabel = raw.isEmpty() ? fallback : raw;
+        m_sync->setDeviceId(deviceId, hostLabel.isEmpty() ? QStringLiteral("computer") : hostLabel);
+    }
+    m_sync->setDataProvider(
+        // serialize the current in-memory profile set (including secrets) — use
+        // m_profiles directly so a just-saved local change is not lost to
+        // a stale vault read, then re-load secrets from the vault as needed.
+        [this]() -> QByteArray {
+            VaultManager v;
+            const QVector<StoredKey> keys = v.listStoredKeys();
+            // Bring the PEM for every key into the snapshot
+            QVector<StoredKey> fullKeys;
+            fullKeys.reserve(keys.size());
+            for (StoredKey k : keys) {
+                if (!k.id.isEmpty()) {
+                    StoredKey out;
+                    if (v.retrieveStoredKey(k.id, out)) {
+                        fullKeys.push_back(out);
+                    }
+                }
+            }
+            SyncPayload p;
+            p.profiles = m_profiles;
+            p.keys = fullKeys;
+            // Let the controller frame rev/timestamp/device
+            return SyncPayloadCodec::toJson(p);
+        },
+        // apply a synced payload back to the local store
+        [this](const QByteArray& jsonBytes) -> bool {
+            bool ok = false;
+            SyncPayload p = SyncPayloadCodec::fromJson(jsonBytes, &ok);
+            if (!ok) {
+                return false;
+            }
+            // Persist sessions + keyring
+            saveProfiles(p.profiles);
+            VaultManager v;
+            for (const StoredKey& k : p.keys) {
+                v.storeStoredKey(k);
+            }
+            m_profiles = p.profiles;
+            rebuildSavedList();
+            rebuildKeychainList();
+            appendLog(QStringLiteral("sync: applied %1 profiles from remote").arg(p.profiles.size()));
+            return true;
+        });
+
+    connect(m_syncTestBtn, &QPushButton::clicked, this, [this]() { syncTestToken(); });
+    connect(m_syncCreateBtn, &QPushButton::clicked, this, [this]() { syncCreateSetup(); });
+    connect(m_syncJoinBtn, &QPushButton::clicked, this, [this]() { syncJoinFromInput(); });
+    connect(m_syncDisableBtn, &QPushButton::clicked, this, [this]() { syncDisable(); });
+    connect(m_syncSyncNowBtn, &QPushButton::clicked, this, [this]() { syncPushNow(); });
+    connect(m_syncCopyKeyBtn, &QPushButton::clicked, this, [this]() {
+        QApplication::clipboard()->setText(m_syncKeyDisplay->text());
+        appendLog(QStringLiteral("sync: sync key copied"));
+    });
+    connect(m_syncPollInterval, &QSpinBox::valueChanged, this, [this](int) { persistSyncLive(); });
+    connect(m_syncEnabledCheck, &QCheckBox::toggled, this, [this](bool on) {
+        persistSyncLive();
+        if (!on) {
+            syncDisable();
+        }
+    });
+
+    // Controller → UI status
+    connect(m_sync, &SyncController::stateChanged, this, &DashboardPage::syncOnStateChanged);
+    connect(m_sync, &SyncController::statusMessage, this, &DashboardPage::syncOnStatus);
+    connect(m_sync, &SyncController::errorOccurred, this, &DashboardPage::syncOnError);
+    connect(m_sync, &SyncController::dataUpdated, this, &DashboardPage::syncOnDataUpdated);
+
+    // Pull-after-save debounce (buffer bursts from profile edits)
+    m_syncSaveDebounce = new QTimer(this);
+    m_syncSaveDebounce->setSingleShot(true);
+    m_syncSaveDebounce->setInterval(1800);
+    connect(m_syncSaveDebounce, &QTimer::timeout, this, [this]() { syncPushNow(); });
+
+    applyStoredSyncState();
+    syncRefreshUiFromSyncState();
+
     connect(clearLogs, &QPushButton::clicked, this, [this]() { m_logsView->clear(); });
     connect(m_passEdit, &QLineEdit::returnPressed, this, &DashboardPage::connectFromForm);
     connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString&) { applySavedFilter(); });
@@ -1693,6 +1921,9 @@ void DashboardPage::deleteSavedProfile(const QString& profileId)
     const QString title = m_profiles[row].displayTitle();
     m_profiles.removeAt(row);
     saveProfiles(m_profiles);
+    if (m_syncSaveDebounce && m_sync && m_sync->state() == SyncController::State::Active) {
+        m_syncSaveDebounce->start();
+    }
     rebuildSavedList();
     rebuildKeychainList();
     m_hint->setText(QStringLiteral("deleted %1").arg(title));
@@ -1950,6 +2181,9 @@ void DashboardPage::saveCurrentFormAsProfile()
     }
 
     saveProfiles(m_profiles);
+    if (m_syncSaveDebounce && m_sync && m_sync->state() == SyncController::State::Active) {
+        m_syncSaveDebounce->start();
+    }
     m_editingId.clear();
     showHome();
 }
@@ -2176,6 +2410,8 @@ void DashboardPage::saveSettingsUi()
     AppSettings::setShortcutSetting(AppSettings::kShortcutFontReset, m_shortcutFontReset->keySequence());
     s.sync();
 
+    persistSyncLive();
+
     Motion::setEnabled(m_settingsAnimations->isChecked());
     ensureSelectedFonts();
     emit settingsApplied();
@@ -2183,4 +2419,222 @@ void DashboardPage::saveSettingsUi()
     m_hint->setText(QStringLiteral("settings saved"));
     appendLog(QStringLiteral("settings saved"));
     showHome();
+}
+
+// ---- Sync (GitHub Gist, end-to-end encrypted) ----------------------------
+
+void DashboardPage::persistSyncLive()
+{
+    if (!m_syncEnabledCheck) {
+        return;
+    }
+    SyncConfig::setEnabled(m_syncEnabledCheck->isChecked());
+    if (m_syncPollInterval) {
+        SyncConfig::setPollIntervalSec(m_syncPollInterval->value());
+    }
+    if (m_sync) {
+        m_sync->setPollIntervalSec(SyncConfig::pollIntervalSec());
+    }
+}
+
+void DashboardPage::applyStoredSyncState()
+{
+    if (!m_syncEnabledCheck) {
+        return;
+    }
+    // Load stored values into the widgets *before* flipping the enable checkbox,
+    // otherwise toggling enable -> persistSyncLive() writes the still-default
+    // spinbox value over the saved poll interval on every startup.
+    if (m_syncPollInterval) {
+        m_syncPollInterval->setValue(SyncConfig::pollIntervalSec());
+    }
+    if (m_sync) {
+        m_sync->setPollIntervalSec(SyncConfig::pollIntervalSec());
+    }
+    m_syncEnabledCheck->setChecked(SyncConfig::enabled());
+    SyncConfig::setEnabled(SyncConfig::enabled());
+
+    // Reconnect to an existing sync if one was previously configured.
+    const QString keyText = SyncConfig::syncKeyText();
+    if (!keyText.isEmpty()) {
+        SyncKey key = SyncKeyCodec::decode(keyText);
+        if (key.isValid()) {
+            const QString uuidHex = QString::fromLatin1(key.syncUuid.toHex());
+            // Prefer the token embedded in the key, then fall back to the keyring.
+            QString token;
+            if (!key.token.isEmpty()) {
+                token = QString::fromUtf8(key.token);
+            } else {
+                token = SyncConfig::loadToken(uuidHex);
+            }
+            if (!token.isEmpty()) {
+                m_syncTokenEdit->setText(token);
+                syncRefreshUiFromSyncState();
+                m_sync->joinSync(keyText, token);
+            }
+        }
+    }
+}
+
+void DashboardPage::syncRefreshUiFromSyncState()
+{
+    if (!m_syncEnabledCheck || !m_sync) {
+        return;
+    }
+    const bool want = SyncConfig::enabled();
+    const QString keyText = m_sync->syncKeyString();
+    const QString gistLabel = SyncConfig::gistDescription();
+
+    m_syncKeyDisplay->setText(keyText);
+    m_syncGistIdLabel->setText(keyText.isEmpty() ? QString() : QStringLiteral("Gist: %1").arg(SyncKeyCodec::decode(keyText).gistId));
+
+    const bool active = (m_sync->state() == SyncController::State::Active);
+    const bool connecting = (m_sync->state() == SyncController::State::Connecting);
+
+    m_syncEnabledHint->setVisible(want);
+    m_syncSyncNowBtn->setEnabled(active && !connecting);
+    m_syncDisableBtn->setEnabled(!m_sync->syncKeyString().isEmpty() || want);
+    m_syncCreateBtn->setEnabled(!connecting && want);
+    m_syncJoinBtn->setEnabled(!connecting && want);
+    m_syncTestBtn->setEnabled(!connecting);
+
+    if (!want) {
+        m_syncStatus->setText(QStringLiteral("Sync is disabled. Enable it to share sessions between devices."));
+    } else if (connecting) {
+        m_syncStatus->setText(QStringLiteral("Sync is connecting…"));
+    } else if (active) {
+        m_syncStatus->setText(QStringLiteral("Sync is active — changes are encrypted and synchronized."));
+    } else {
+        m_syncStatus->setText(keyText.isEmpty()
+                                  ? QStringLiteral("Sync enabled. Create a sync on Computer 1 or join with the key on Computer 2.")
+                                  : QStringLiteral("Sync key is set locally. Token and connection will be validated."));
+    }
+}
+
+void DashboardPage::syncCreateSetup()
+{
+    const QString token = m_syncTokenEdit->text().trimmed();
+    if (token.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Sync token required"),
+                             QStringLiteral("Enter your GitHub token before creating a sync."));
+        return;
+    }
+    if (!m_syncEnabledCheck->isChecked()) {
+        m_syncEnabledCheck->setChecked(true);
+        SyncConfig::setEnabled(true);
+    }
+    m_syncStatus->setText(QStringLiteral("Creating an encrypted gist on GitHub…"));
+    m_sync->createSync(token, QStringLiteral("clientosh saved-sessions sync"));
+}
+
+void DashboardPage::syncJoinFromInput()
+{
+    const QString keyText = m_syncKeyEdit->text().trimmed();
+    if (keyText.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("Sync key required"),
+                             QStringLiteral("Paste the sync key received from Computer 1."));
+        return;
+    }
+    // The token may already be embedded in the sync key; in that case entering
+    // one here is optional (a locally typed token takes precedence).
+    const QString token = m_syncTokenEdit->text().trimmed();
+    if (token.isEmpty() && SyncKeyCodec::decode(keyText).token.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("GitHub token required"),
+                             QStringLiteral("Enter the GitHub token for this machine (or use a sync key that already contains it)."));
+        return;
+    }
+    m_syncStatus->setText(QStringLiteral("Joining sync and pulling encrypted data…"));
+    m_sync->joinSync(keyText, token);
+}
+
+void DashboardPage::syncDisable()
+{
+    const QString keyText = SyncConfig::syncKeyText();
+    if (!keyText.isEmpty()) {
+        SyncKey key = SyncKeyCodec::decode(keyText);
+        if (key.isValid()) {
+            const QString uuidHex = QString::fromLatin1(key.syncUuid.toHex());
+            SyncConfig::clearToken(uuidHex);
+        }
+    }
+    SyncConfig::setSyncKeyText(QString());
+    SyncConfig::setEnabled(false);
+    if (m_syncEnabledCheck) {
+        m_syncEnabledCheck->setChecked(false);
+    }
+    if (m_sync) {
+        m_sync->disable();
+    }
+    appendLog(QStringLiteral("sync: disabled"));
+    syncRefreshUiFromSyncState();
+}
+
+void DashboardPage::syncTestToken()
+{
+    const QString token = m_syncTokenEdit->text().trimmed();
+    if (token.isEmpty()) {
+        m_syncTokenStatusLabel->setText(QStringLiteral("Enter a token to test."));
+        return;
+    }
+    m_syncTokenStatusLabel->setText(QStringLiteral("Checking token…"));
+    m_sync->testToken(token);
+}
+
+void DashboardPage::syncPushNow()
+{
+    if (!m_sync || m_sync->state() != SyncController::State::Active) {
+        m_syncStatus->setText(QStringLiteral("Sync is not connected. Create or join a sync first."));
+        return;
+    }
+    m_syncStatus->setText(QStringLiteral("Uploading encrypted changes…"));
+    m_sync->pushNow();
+}
+
+void DashboardPage::syncPullNow()
+{
+    if (!m_sync || m_sync->state() != SyncController::State::Active) {
+        return;
+    }
+    m_sync->pullNow();
+}
+
+void DashboardPage::syncOnStateChanged(SyncController::State state)
+{
+    if (state == SyncController::State::Active) {
+        // Persist the key + poll settings every time we become Active.
+        if (!m_sync->syncKeyString().isEmpty()) {
+            SyncConfig::setSyncKeyText(m_sync->syncKeyString());
+            SyncKey key = SyncKeyCodec::decode(m_sync->syncKeyString());
+            if (key.isValid() && !m_syncTokenEdit->text().trimmed().isEmpty()) {
+                const QString uuidHex = QString::fromLatin1(key.syncUuid.toHex());
+                SyncConfig::storeToken(uuidHex, m_syncTokenEdit->text().trimmed());
+            }
+        }
+        SyncConfig::setEnabled(true);
+    }
+    syncRefreshUiFromSyncState();
+}
+
+void DashboardPage::syncOnStatus(const QString& message)
+{
+    m_syncStatus->setText(message);
+    if (message.toLower().contains(QStringLiteral("valid"))) {
+        m_syncTokenStatusLabel->setText(message);
+    }
+    syncRefreshUiFromSyncState();
+}
+
+void DashboardPage::syncOnError(const QString& message)
+{
+    m_syncStatus->setText(message);
+    m_syncTokenStatusLabel->setText(message);
+    appendLog(QStringLiteral("sync error: %1").arg(message));
+    syncRefreshUiFromSyncState();
+}
+
+void DashboardPage::syncOnDataUpdated()
+{
+    // The data provider already replaced profiles/keyring; just refresh the UI.
+    refresh();
+    appendLog(QStringLiteral("sync: profiles updated from remote"));
 }

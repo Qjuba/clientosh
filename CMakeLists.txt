@@ -144,6 +144,20 @@ add_executable(clientosh
     src/core/VaultManager.h
     src/core/VaultManager.cpp
     src/core/PrivateKeyLoader.h
+    src/core/sync/SyncKey.h
+    src/core/sync/SyncKey.cpp
+    src/core/sync/SyncCrypto.h
+    src/core/sync/SyncCrypto.cpp
+    src/core/sync/SyncPayload.h
+    src/core/sync/SyncPayload.cpp
+    src/core/sync/SyncGitHub.h
+    src/core/sync/SyncGitHub.cpp
+    src/core/sync/SyncWorker.h
+    src/core/sync/SyncWorker.cpp
+    src/core/sync/SyncController.h
+    src/core/sync/SyncController.cpp
+    src/core/sync/SyncConfig.h
+    src/core/sync/SyncConfig.cpp
     src/PanelTypes.h
     src/DropOverlay.h
     src/DropOverlay.cpp

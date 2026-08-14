@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/SessionProfile.h"
+#include "core/sync/SyncController.h"
 
 #include <QColor>
 #include <QWidget>
@@ -63,6 +64,7 @@ private:
         Ssh,
         Sftp,
         Shortcuts,
+        Sync,
         About
     };
 
@@ -203,6 +205,46 @@ private:
     QCheckBox* m_enableFontLarger = nullptr;
     QCheckBox* m_enableFontSmaller = nullptr;
     QCheckBox* m_enableFontReset = nullptr;
+
+    // ---- Sync (GitHub Gist) -------------------------------------------------
+    SyncController* m_sync = nullptr;
+    QLabel* m_syncEnabledHint = nullptr;
+    QCheckBox* m_syncEnabledCheck = nullptr;
+    QLineEdit* m_syncTokenEdit = nullptr;
+    QPushButton* m_syncTokenClearBtn = nullptr;
+    QLabel* m_syncTokenStatusLabel = nullptr;
+    QPushButton* m_syncTestBtn = nullptr;
+    QPushButton* m_syncCreateBtn = nullptr;
+    QPushButton* m_syncJoinBtn = nullptr;
+    QPushButton* m_syncDisableBtn = nullptr;
+    QPushButton* m_syncSyncNowBtn = nullptr;
+    QLineEdit* m_syncKeyEdit = nullptr;      // paste sync key (Computer 2)
+    QLineEdit* m_syncKeyDisplay = nullptr;   // read-only current sync key
+    QPushButton* m_syncCopyKeyBtn = nullptr;
+    QPushButton* m_syncCopyAgainBtn = nullptr;
+    QSpinBox* m_syncPollInterval = nullptr;
+    QLabel* m_syncStatus = nullptr;
+    QLabel* m_syncGistIdLabel = nullptr;
+    // Live-only token gate for setup
+    QLineEdit* m_syncCreateTokenEdit = nullptr;
+    QPushButton* m_syncJoinTokenEye = nullptr;
+    // Debounce support
+    QTimer* m_syncSaveDebounce = nullptr;
+
+    void syncCreateSetup();
+    void syncJoinFromInput();
+    void syncDisable();
+    void syncTestToken();
+    void syncPushNow();
+    void syncPullNow();
+    void syncRefreshUiFromSyncState();
+    void syncOnStateChanged(SyncController::State state);
+    void syncOnStatus(const QString& message);
+    void syncOnError(const QString& message);
+    void syncOnDataUpdated();
+
+    void persistSyncLive();
+    void applyStoredSyncState();
 
     QLabel* m_hint = nullptr;
 

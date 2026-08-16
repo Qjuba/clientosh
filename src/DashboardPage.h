@@ -20,6 +20,7 @@ class QListWidget;
 class QPlainTextEdit;
 class QButtonGroup;
 class QComboBox;
+class QSlider;
 class QAbstractButton;
 class QKeySequenceEdit;
 class QNetworkAccessManager;
@@ -189,6 +190,9 @@ private:
     QCheckBox* m_settingsHighlightKeywords = nullptr;
 
     QCheckBox* m_settingsCtrlScrollZoom = nullptr;
+    QSlider* m_settingsScrollSensitivity = nullptr;
+    QLabel* m_settingsScrollSensitivityValue = nullptr;
+    QComboBox* m_settingsCopyPaste = nullptr;
     QKeySequenceEdit* m_shortcutNewSession = nullptr;
     QKeySequenceEdit* m_shortcutSettings = nullptr;
     QKeySequenceEdit* m_shortcutDashboard = nullptr;

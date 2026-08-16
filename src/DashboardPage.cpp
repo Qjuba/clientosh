@@ -350,6 +350,61 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         gLay->addWidget(m_settingsSavePassDefault);
         addSettingsField(sec, QStringLiteral("Default host"), m_settingsDefaultHost);
         addSettingsField(sec, QStringLiteral("Default username"), m_settingsDefaultUser);
+        gLay->addSpacing(10);
+
+        // Scroll sensitivity slider
+        m_settingsScrollSensitivity = new QSlider(Qt::Horizontal, sec);
+        m_settingsScrollSensitivity->setRange(1, 20);
+        m_settingsScrollSensitivity->setSingleStep(1);
+        m_settingsScrollSensitivity->setPageStep(1);
+        m_settingsScrollSensitivity->setFixedWidth(220);
+        m_settingsScrollSensitivityValue = new QLabel(QStringLiteral("1 line"), sec);
+        m_settingsScrollSensitivityValue->setObjectName(QStringLiteral("dashHint"));
+
+        auto* scrollRow = new QWidget(sec);
+        auto* scrollRowLay = new QHBoxLayout(scrollRow);
+        scrollRowLay->setContentsMargins(0, 0, 0, 0);
+        scrollRowLay->setSpacing(8);
+        auto* scrollLab = new QLabel(QStringLiteral("Scroll Sensitivity"), scrollRow);
+        scrollLab->setObjectName(QStringLiteral("fieldLabel"));
+        scrollRowLay->addWidget(scrollLab);
+        scrollRowLay->addStretch(1);
+        scrollRowLay->addWidget(m_settingsScrollSensitivityValue);
+        scrollRowLay->addWidget(m_settingsScrollSensitivity);
+        gLay->addWidget(scrollRow);
+
+        auto* scrollHint = new QLabel(
+            QStringLiteral("Lines scrolled per wheel notch when reviewing terminal history."), sec);
+        scrollHint->setObjectName(QStringLiteral("dashHint"));
+        scrollHint->setWordWrap(true);
+        gLay->addWidget(scrollHint);
+        gLay->addSpacing(6);
+
+        // Copy & Paste mode
+        m_settingsCopyPaste = new QComboBox(sec);
+        m_settingsCopyPaste->addItem(QStringLiteral("Standard Copy & Paste"), QStringLiteral("standard"));
+        m_settingsCopyPaste->addItem(QStringLiteral("Copy & Paste Menu"), QStringLiteral("menu"));
+        addSettingsField(sec, QStringLiteral("Copy & Paste"), m_settingsCopyPaste);
+        auto* pasteHint = new QLabel(
+            QStringLiteral("\"Copy & Paste Menu\" opens a right-click menu with Copy, Paste, and Copy & Paste. "
+                           "Standard pastes on right-click."), sec);
+        pasteHint->setObjectName(QStringLiteral("dashHint"));
+        pasteHint->setWordWrap(true);
+        gLay->addWidget(pasteHint);
+        gLay->addSpacing(6);
+
+        connect(m_settingsScrollSensitivity, &QSlider::valueChanged, this, [this](int v) {
+            m_settingsScrollSensitivityValue->setText(QStringLiteral("%1 lines").arg(v));
+            AppSettings::setScrollSensitivity(v);
+            emit settingsApplied();
+        });
+        connect(m_settingsCopyPaste, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+                [this](int) {
+                    AppSettings::setCopyPasteMode(m_settingsCopyPaste->currentData().toString());
+                    emit settingsApplied();
+                });
+
+        gLay->addWidget(new QWidget(sec)); // spacing filler
         makeScrollPage(sec);
     }
 
@@ -1469,6 +1524,8 @@ void DashboardPage::persistShortcutsLive()
 {
     QSettings s;
     s.setValue(QLatin1String(AppSettings::kCtrlScrollFontZoom), m_settingsCtrlScrollZoom->isChecked());
+    s.setValue(QLatin1String(AppSettings::kScrollSensitivity), m_settingsScrollSensitivity->value());
+    s.setValue(QLatin1String(AppSettings::kCopyPasteMode), m_settingsCopyPaste->currentData().toString());
     AppSettings::setShortcutSetting(AppSettings::kShortcutNewSession, m_shortcutNewSession->keySequence());
     AppSettings::setShortcutSetting(AppSettings::kShortcutSettings, m_shortcutSettings->keySequence());
     AppSettings::setShortcutSetting(AppSettings::kShortcutDashboard, m_shortcutDashboard->keySequence());
@@ -2324,6 +2381,20 @@ void DashboardPage::loadSettingsUi()
     m_settingsCtrlScrollZoom->blockSignals(true);
     m_settingsCtrlScrollZoom->setChecked(AppSettings::ctrlScrollFontZoom());
 
+    if (m_settingsScrollSensitivity) {
+        m_settingsScrollSensitivity->blockSignals(true);
+        const int sens = AppSettings::scrollSensitivity();
+        m_settingsScrollSensitivity->setValue(sens);
+        m_settingsScrollSensitivityValue->setText(QStringLiteral("%1 lines").arg(sens));
+        m_settingsScrollSensitivity->blockSignals(false);
+    }
+    if (m_settingsCopyPaste) {
+        m_settingsCopyPaste->blockSignals(true);
+        const int cpIdx = m_settingsCopyPaste->findData(AppSettings::copyPasteMode());
+        m_settingsCopyPaste->setCurrentIndex(cpIdx >= 0 ? cpIdx : 0);
+        m_settingsCopyPaste->blockSignals(false);
+    }
+
     // Hydrate enable toggles independently of the key fields.
     const QList<QCheckBox*> shortcutEnables = {
         m_enableNewSession, m_enableSettings, m_enableDashboard, m_enableClosePanel,
@@ -2400,6 +2471,8 @@ void DashboardPage::saveSettingsUi()
     }
 
     s.setValue(QLatin1String(AppSettings::kCtrlScrollFontZoom), m_settingsCtrlScrollZoom->isChecked());
+    s.setValue(QLatin1String(AppSettings::kScrollSensitivity), m_settingsScrollSensitivity->value());
+    s.setValue(QLatin1String(AppSettings::kCopyPasteMode), m_settingsCopyPaste->currentData().toString());
     AppSettings::setShortcutSetting(AppSettings::kShortcutNewSession, m_shortcutNewSession->keySequence());
     AppSettings::setShortcutSetting(AppSettings::kShortcutSettings, m_shortcutSettings->keySequence());
     AppSettings::setShortcutSetting(AppSettings::kShortcutDashboard, m_shortcutDashboard->keySequence());

@@ -13,6 +13,8 @@ class QGraphicsOpacityEffect;
 class QPropertyAnimation;
 class QInputEvent;
 class QWheelEvent;
+class QMenu;
+class QAction;
 
 class TerminalWidget : public QWidget
 {
@@ -149,6 +151,7 @@ private:
     QString selectedText() const;
     void copySelectionToClipboard(bool clearSel = true);
     void pasteClipboard();
+    void showContextMenu(const QPoint& globalPos);
     void selectWordAt(int row, int col);
     void selectLineAt(int row);
     bool isWordChar(char32_t ch) const;
@@ -245,4 +248,5 @@ private:
     QGraphicsOpacityEffect* m_fontZoomOpacity = nullptr;
     QPropertyAnimation* m_fontZoomFade = nullptr;
     QTimer* m_fontZoomHideTimer = nullptr;
+    QMenu* m_contextMenu = nullptr;
 };

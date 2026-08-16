@@ -32,6 +32,8 @@ inline constexpr const char* kSftpVerboseLogging = "settings/sftpVerboseLogging"
 inline constexpr const char* kHighlightAddresses = "settings/highlightAddresses";
 inline constexpr const char* kHighlightLogKeywords = "settings/highlightLogKeywords";
 inline constexpr const char* kCtrlScrollFontZoom = "settings/ctrlScrollFontZoom";
+inline constexpr const char* kScrollSensitivity = "settings/scrollSensitivity";
+inline constexpr const char* kCopyPasteMode = "settings/copyPasteMode";
 inline constexpr const char* kShortcutNewSession = "settings/shortcutNewSession";
 inline constexpr const char* kShortcutSettings = "settings/shortcutSettings";
 inline constexpr const char* kShortcutDashboard = "settings/shortcutDashboard";
@@ -246,6 +248,36 @@ inline bool highlightLogKeywords()
 inline bool ctrlScrollFontZoom()
 {
     return QSettings().value(QLatin1String(kCtrlScrollFontZoom), true).toBool();
+}
+
+/** Lines scrolled per wheel notch (1–20). Default 1 line per notch. */
+inline int scrollSensitivity()
+{
+    return qBound(1, QSettings().value(QLatin1String(kScrollSensitivity), 1).toInt(), 20);
+}
+
+inline void setScrollSensitivity(int lines)
+{
+    setValueSync(kScrollSensitivity, qBound(1, lines, 20));
+}
+
+/** "standard" or "menu". */
+inline QString copyPasteMode()
+{
+    const QString v = QSettings().value(QLatin1String(kCopyPasteMode), QStringLiteral("standard")).toString();
+    return (v == QLatin1String("menu")) ? QStringLiteral("menu") : QStringLiteral("standard");
+}
+
+inline bool copyPasteMenu()
+{
+    return copyPasteMode() == QLatin1String("menu");
+}
+
+inline void setCopyPasteMode(const QString& mode)
+{
+    const QString next = (mode == QLatin1String("menu")) ? QStringLiteral("menu")
+                                                         : QStringLiteral("standard");
+    setValueSync(kCopyPasteMode, next);
 }
 
 inline QKeySequence shortcutFromSetting(const char* key, const QKeySequence& fallback)

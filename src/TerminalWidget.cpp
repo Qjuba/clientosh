@@ -12,6 +12,7 @@
 #include <QInputEvent>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPen>
@@ -1023,7 +1024,9 @@ bool TerminalWidget::sendWheelToApp(QWheelEvent* event)
 
     const QPoint cell = cellFromPos(event->position().toPoint());
     // One notch ≈ 120° in eighths; keep at least one step for fine trackpads.
-    const int steps = qMax(1, qAbs(delta) / 40);
+    // "Scroll Sensitivity" scales how far the TUI moves per notch (1 = one line).
+    const int sensitivity = AppSettings::scrollSensitivity();
+    const int steps = qMax(1, qAbs(delta) / 120) * sensitivity;
 
     // 1) Mouse-tracking apps (btop, vim mouse=a, …): SGR/X10 wheel buttons
     if (mouseReportingActive() && shouldReportMouse(event)) {
@@ -1980,6 +1983,35 @@ void TerminalWidget::pasteClipboard()
     }
 }
 
+void TerminalWidget::showContextMenu(const QPoint& globalPos)
+{
+    if (!m_contextMenu) {
+        m_contextMenu = new QMenu(this);
+        m_contextMenu->setObjectName(QStringLiteral("termContextMenu"));
+
+        auto* copyAction = m_contextMenu->addAction(QStringLiteral("Copy"));
+        connect(copyAction, &QAction::triggered, this, [this]() {
+            if (hasSelection()) {
+                copySelectionToClipboard();
+            } else {
+                copySelectionToClipboard(false);
+            }
+        });
+
+        auto* pasteAction = m_contextMenu->addAction(QStringLiteral("Paste"));
+        connect(pasteAction, &QAction::triggered, this, [this]() { pasteClipboard(); });
+
+        auto* bothAction = m_contextMenu->addAction(QStringLiteral("Copy & Paste"));
+        connect(bothAction, &QAction::triggered, this, [this]() {
+            if (hasSelection()) {
+                copySelectionToClipboard();
+            }
+            pasteClipboard();
+        });
+    }
+    m_contextMenu->popup(globalPos);
+}
+
 void TerminalWidget::selectWordAt(int row, int col)
 {
     const int last = maxAbsIndex();
@@ -2563,8 +2595,12 @@ void TerminalWidget::mousePressEvent(QMouseEvent* event)
     }
 
     if (event->button() == Qt::RightButton) {
-        // PuTTY: right-click pastes
-        pasteClipboard();
+        if (AppSettings::copyPasteMenu()) {
+            showContextMenu(event->globalPosition().toPoint());
+        } else {
+            // PuTTY: right-click pastes
+            pasteClipboard();
+        }
         event->accept();
         return;
     }
@@ -2749,7 +2785,8 @@ void TerminalWidget::wheelEvent(QWheelEvent* event)
     }
 
     // Positive wheel = scroll up into history
-    const int lines = qMax(1, qAbs(delta) / 40);
+    const int sensitivity = AppSettings::scrollSensitivity();
+    const int lines = qMax(1, qAbs(delta) / 120) * sensitivity;
     scrollViewBy(delta > 0 ? lines : -lines);
     event->accept();
 }

@@ -136,12 +136,16 @@ private:
     void clampCursor();
 
     QPoint cellFromPos(const QPoint& pos) const;
-    int indexFromCell(int row, int col) const;
-    void cellFromIndex(int index, int* row, int* col) const;
+    // Selection uses absolute cell indices (0 = oldest scrollback line) so that
+    // the selection survives viewport scrolling and can span scrollback history.
+    int absIndexFromView(int viewRow, int col) const;
+    int maxAbsIndex() const;
+    const Cell& cellAtAbsLine(int absLine, int col) const;
     bool hasSelection() const;
     bool isCellSelected(int row, int col) const;
     void clearSelection();
     void setSelectionRange(int a, int b);
+    void shiftSelectionBy(int cellDelta);
     QString selectedText() const;
     void copySelectionToClipboard(bool clearSel = true);
     void pasteClipboard();

@@ -1729,6 +1729,7 @@ void TerminalWidget::trimScrollback()
     }
     m_scrollback.erase(m_scrollback.begin(), m_scrollback.begin() + overflow);
     m_viewOffset = qMin(m_viewOffset, maxViewOffset());
+    shiftSelectionBy(-overflow * m_cols);
 }
 
 void TerminalWidget::clearScrollback()
@@ -1746,9 +1747,6 @@ void TerminalWidget::setViewOffset(int offset)
         return;
     }
     m_viewOffset = offset;
-    if (m_selecting) {
-        clearSelection();
-    }
     syncScrollBar();
     update();
 }
@@ -1833,15 +1831,33 @@ QPoint TerminalWidget::cellFromPos(const QPoint& pos) const
     return QPoint(col, row);
 }
 
-int TerminalWidget::indexFromCell(int row, int col) const
+int TerminalWidget::absIndexFromView(int viewRow, int col) const
 {
-    return row * m_cols + col;
+    // Stable across viewport scrolling: absolute line 0 is the oldest scrollback
+    // line; the live screen sits above the newest scrollback line.
+    const int absLine = m_scrollback.size() - m_viewOffset + viewRow;
+    return absLine * m_cols + col;
 }
 
-void TerminalWidget::cellFromIndex(int index, int* row, int* col) const
+int TerminalWidget::maxAbsIndex() const
 {
-    *row = index / m_cols;
-    *col = index % m_cols;
+    return (m_scrollback.size() + m_rows) * m_cols - 1;
+}
+
+const TerminalWidget::Cell& TerminalWidget::cellAtAbsLine(int absLine, int col) const
+{
+    static const Cell kBlank{};
+    if (absLine < 0 || absLine >= m_scrollback.size() + m_rows || col < 0 || col >= m_cols) {
+        return kBlank;
+    }
+    if (absLine < m_scrollback.size()) {
+        const QVector<Cell>& line = m_scrollback.at(absLine);
+        if (col >= line.size()) {
+            return kBlank;
+        }
+        return line.at(col);
+    }
+    return cellAt(absLine - m_scrollback.size(), col);
 }
 
 bool TerminalWidget::hasSelection() const
@@ -1854,7 +1870,7 @@ bool TerminalWidget::isCellSelected(int row, int col) const
     if (!hasSelection()) {
         return false;
     }
-    const int idx = indexFromCell(row, col);
+    const int idx = absIndexFromView(row, col);
     return idx >= m_selStart && idx <= m_selEnd;
 }
 
@@ -1875,12 +1891,32 @@ void TerminalWidget::setSelectionRange(int a, int b)
         clearSelection();
         return;
     }
-    const int last = m_cols * m_rows - 1;
+    const int last = maxAbsIndex();
     a = qBound(0, a, last);
     b = qBound(0, b, last);
     m_selStart = qMin(a, b);
     m_selEnd = qMax(a, b);
     update();
+}
+
+void TerminalWidget::shiftSelectionBy(int cellDelta)
+{
+    if (m_selAnchor < 0 || m_selStart < 0 || m_selEnd < 0) {
+        return;
+    }
+    const int last = maxAbsIndex();
+    auto shift = [&](int& v) {
+        if (v < 0) {
+            return;
+        }
+        v = qBound(0, v + cellDelta, last);
+    };
+    shift(m_selAnchor);
+    shift(m_selStart);
+    shift(m_selEnd);
+    if (m_selStart > m_selEnd) {
+        clearSelection();
+    }
 }
 
 bool TerminalWidget::isWordChar(char32_t ch) const
@@ -1900,14 +1936,9 @@ QString TerminalWidget::selectedText() const
     }
 
     QString text;
-    int row = 0;
-    int col = 0;
-    cellFromIndex(m_selStart, &row, &col);
-
     for (int idx = m_selStart; idx <= m_selEnd; ++idx) {
-        int r = 0;
-        int c = 0;
-        cellFromIndex(idx, &r, &c);
+        const int r = idx / m_cols;    // absolute line
+        const int c = idx % m_cols;
         if (idx > m_selStart && c == 0) {
             // Trim trailing spaces from previous line, then newline
             while (text.endsWith(QLatin1Char(' '))) {
@@ -1915,7 +1946,7 @@ QString TerminalWidget::selectedText() const
             }
             text += QLatin1Char('\n');
         }
-        const char32_t ch = displayCell(r, c).ch;
+        const char32_t ch = cellAtAbsLine(r, c).ch;
         text += QString::fromUcs4(&ch, 1);
     }
 
@@ -1951,27 +1982,25 @@ void TerminalWidget::pasteClipboard()
 
 void TerminalWidget::selectWordAt(int row, int col)
 {
-    int start = indexFromCell(row, col);
+    const int last = maxAbsIndex();
+    int start = absIndexFromView(row, col);
     int end = start;
-    if (!isWordChar(displayCell(row, col).ch)) {
+    if (!isWordChar(cellAtAbsLine(start / m_cols, start % m_cols).ch)) {
         setSelectionRange(start, end);
         return;
     }
     while (start > 0) {
-        int r = 0;
-        int c = 0;
-        cellFromIndex(start - 1, &r, &c);
-        if (!isWordChar(displayCell(r, c).ch)) {
+        const int r = (start - 1) / m_cols;
+        const int c = (start - 1) % m_cols;
+        if (!isWordChar(cellAtAbsLine(r, c).ch)) {
             break;
         }
         --start;
     }
-    const int last = m_cols * m_rows - 1;
     while (end < last) {
-        int r = 0;
-        int c = 0;
-        cellFromIndex(end + 1, &r, &c);
-        if (!isWordChar(displayCell(r, c).ch)) {
+        const int r = (end + 1) / m_cols;
+        const int c = (end + 1) % m_cols;
+        if (!isWordChar(cellAtAbsLine(r, c).ch)) {
             break;
         }
         ++end;
@@ -1982,8 +2011,8 @@ void TerminalWidget::selectWordAt(int row, int col)
 
 void TerminalWidget::selectLineAt(int row)
 {
-    const int start = indexFromCell(row, 0);
-    const int end = indexFromCell(row, m_cols - 1);
+    const int start = absIndexFromView(row, 0);
+    const int end = absIndexFromView(row, m_cols - 1);
     m_selAnchor = start;
     setSelectionRange(start, end);
 }
@@ -2520,7 +2549,6 @@ void TerminalWidget::mousePressEvent(QMouseEvent* event)
 {
     setFocus(Qt::MouseFocusReason);
     const QPoint cell = cellFromPos(event->pos());
-    const int idx = indexFromCell(cell.y(), cell.x());
 
     if (shouldReportMouse(event)) {
         clearSelection();
@@ -2569,8 +2597,8 @@ void TerminalWidget::mousePressEvent(QMouseEvent* event)
         }
 
         m_selecting = true;
-        m_selAnchor = idx;
-        setSelectionRange(idx, idx);
+        m_selAnchor = absIndexFromView(cell.y(), cell.x());
+        setSelectionRange(m_selAnchor, m_selAnchor);
         grabMouse();
         event->accept();
         return;
@@ -2608,7 +2636,7 @@ void TerminalWidget::mouseMoveEvent(QMouseEvent* event)
     }
 
     if (m_selecting && (event->buttons() & Qt::LeftButton)) {
-        const int idx = indexFromCell(cell.y(), cell.x());
+        const int idx = absIndexFromView(cell.y(), cell.x());
         setSelectionRange(m_selAnchor, idx);
         event->accept();
         return;
@@ -2639,7 +2667,7 @@ void TerminalWidget::mouseReleaseEvent(QMouseEvent* event)
         m_selecting = false;
         releaseMouse();
 
-        const int idx = indexFromCell(cell.y(), cell.x());
+        const int idx = absIndexFromView(cell.y(), cell.x());
         setSelectionRange(m_selAnchor, idx);
 
         // PuTTY: releasing a selection copies it to the clipboard,

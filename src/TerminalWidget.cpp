@@ -1976,11 +1976,21 @@ void TerminalWidget::pasteClipboard()
         return;
     }
     const QString text = QApplication::clipboard()->text();
-    if (!text.isEmpty()) {
-        emit inputReady(text.toUtf8());
-        // On paste, clear any active selection.
-        clearSelection();
+    if (text.isEmpty()) {
+        return;
     }
+
+    // Raw-mode TUIs (nano, vim, less) expect the Enter key to arrive as a
+    // carriage return (\r), not a line feed (\n). Normalize every newline in
+    // the pasted text to \r so multi-line paste lands correctly regardless of
+    // whether the clipboard uses LF, CRLF, or bare CR.
+    QByteArray data = text.toUtf8();
+    data.replace("\r\n", "\r");
+    data.replace('\n', '\r');
+
+    emit inputReady(data);
+    // On paste, clear any active selection.
+    clearSelection();
 }
 
 void TerminalWidget::showContextMenu(const QPoint& globalPos)

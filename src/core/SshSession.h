@@ -40,6 +40,8 @@ signals:
     void dataReceived(const QByteArray& data);
     void errorOccurred(const QString& message);
     void statusChanged(const QString& status);
+    /** Emitted once right after the SSH transport connects, with the OS detected from the server banner. */
+    void systemDetected(const QString& system);
 
 protected:
     void run() override;

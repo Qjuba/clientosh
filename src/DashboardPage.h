@@ -4,6 +4,8 @@
 #include "core/sync/SyncController.h"
 
 #include <QColor>
+#include <QHash>
+#include <QStringList>
 #include <QWidget>
 #include <QVector>
 
@@ -16,6 +18,8 @@ class QLabel;
 class QPushButton;
 class QToolButton;
 class QTableWidget;
+class QTreeWidget;
+class QMenu;
 class QListWidget;
 class QPlainTextEdit;
 class QButtonGroup;
@@ -23,8 +27,6 @@ class QComboBox;
 class QSlider;
 class QAbstractButton;
 class QKeySequenceEdit;
-class QNetworkAccessManager;
-class QNetworkReply;
 
 class DashboardPage : public QWidget
 {
@@ -73,12 +75,24 @@ private:
     void rebuildActiveList();
     void rebuildKeychainList();
     void applySavedFilter();
+    // ---- Host tags ------------------------------------------------------
+    void showHostContextMenu(const QPoint& globalPos, const QString& profileId);
+    void showPageContextMenu(const QPoint& globalPos);
+    void showTagContextMenu(const QPoint& globalPos, const QString& tagName);
+    void addTagDialog();
+    void renameTagDialog(const QString& tagName);
+    void deleteTag(const QString& tagName);
+    void moveProfileToTag(const QString& profileId, const QString& tagName);
+    void removeProfileFromTag(const QString& profileId);
+    QStringList currentTags() const;
+    void persistTagCollapseState();
     void clearForm();
     void loadProfileIntoForm(const SessionProfile& profile);
     void showEditSessionForm(const QString& profileId);
     void openSavedProfile(const QString& profileId);
     void sftpSavedProfile(const QString& profileId);
     void deleteSavedProfile(const QString& profileId);
+    void setProfileSystem(const QString& profileId, const QString& system);
     void saveCurrentFormAsProfile();
     void connectFromForm();
     void loadSettingsUi();
@@ -99,7 +113,6 @@ private:
     void importKeyIntoKeyring();
     void removeSelectedKeyringKey();
     void onKeyringSelectionChanged(int index);
-    void checkLatestVersion();
     void fillProfileFromForm(SessionProfile* profile) const;
     int profileIndexById(const QString& id) const;
     QToolButton* makeNavButton(const QString& iconPath, const QString& text, QWidget* parent);
@@ -131,7 +144,7 @@ private:
     QWidget* m_settingsPage = nullptr;
     QWidget* m_formPage = nullptr;
 
-    QTableWidget* m_savedTable = nullptr;
+    QTreeWidget* m_savedTree = nullptr;
     QLabel* m_savedEmpty = nullptr;
     QTableWidget* m_keysTable = nullptr;
     QLabel* m_keysEmpty = nullptr;
@@ -252,12 +265,12 @@ private:
 
     QLabel* m_hint = nullptr;
 
-    QNetworkAccessManager* m_aboutNet = nullptr;
     QLabel* m_aboutCurrentVersion = nullptr;
-    QLabel* m_aboutLatestVersion = nullptr;
-    QPushButton* m_aboutRetryBtn = nullptr;
 
     QVector<SessionProfile> m_profiles;
+    QStringList m_tags;
+    QHash<QString, QStringList> m_tagAssignments; // tagName → profile IDs
+    QStringList m_tagCollapsed;                   // tagNames currently collapsed
     QString m_editingId;
     NavPage m_currentNav = NavPage::Hosts;
 };

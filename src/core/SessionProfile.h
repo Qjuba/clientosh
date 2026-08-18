@@ -29,10 +29,17 @@ struct SessionProfile {
     QString keyPassphrase;  // for encrypted keys (not persisted by default)
     bool saveKeyPassphrase = false;
     ConnectionMode connectionMode = ConnectionMode::Ssh;
+    QString system; // OS detected from the SSH banner on last connect (e.g. "Linux", "Ubuntu").
 
     bool usesPrivateKey() const
     {
         return !privateKeyId.trimmed().isEmpty() || !privateKeyPath.trimmed().isEmpty();
+    }
+
+    /** "—" placeholder when the OS has not been detected yet. */
+    QString systemLabel() const
+    {
+        return system.trimmed().isEmpty() ? QStringLiteral("—") : system.trimmed();
     }
 
     bool isSftpOnly() const
@@ -130,6 +137,7 @@ inline QJsonObject profileToJson(const SessionProfile& p)
     o.insert(QStringLiteral("privateKeyId"), p.privateKeyId);
     o.insert(QStringLiteral("saveKeyPassphrase"), p.saveKeyPassphrase);
     o.insert(QStringLiteral("connectionMode"), connectionModeToString(p.connectionMode));
+    o.insert(QStringLiteral("system"), p.system);
     return o;
 }
 
@@ -147,6 +155,7 @@ inline SessionProfile profileFromJson(const QJsonObject& o)
     p.saveKeyPassphrase = o.value(QStringLiteral("saveKeyPassphrase")).toBool(false);
     p.connectionMode = connectionModeFromString(
         o.value(QStringLiteral("connectionMode")).toString(QStringLiteral("ssh")));
+    p.system = o.value(QStringLiteral("system")).toString();
     if (p.id.isEmpty()) {
         p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     }

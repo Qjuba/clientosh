@@ -54,6 +54,8 @@ signals:
     void sessionActivated(const QString& id);
     void sessionStatusChanged(const QString& id, const QString& status);
     void sessionConnectionChanged(const QString& id, bool connected);
+    /** Id is the session id; carry the detected OS so the dashboard can update the profile. */
+    void sessionSystemDetected(const QString& id, const QString& system);
     void sessionDetachChanged(const QString& id, bool detached);
     void sessionDataReceived(const QString& id, const QByteArray& data);
     void sessionError(const QString& id, const QString& message);

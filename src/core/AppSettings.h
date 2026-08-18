@@ -1,9 +1,11 @@
 #pragma once
 
 #include <QColor>
+#include <QHash>
 #include <QKeySequence>
 #include <QSettings>
 #include <QString>
+#include <QStringList>
 #include <QVariant>
 
 /** Central QSettings keys for clientosh preferences. */
@@ -368,6 +370,55 @@ inline QKeySequence shortcutFontReset()
         return {};
     }
     return shortcutFromSetting(kShortcutFontReset, QKeySequence(QStringLiteral("Ctrl+0")));
+}
+
+// ---- Tags (host organization) -----------------------------------------------
+inline constexpr const char* kTagsDefinitions = "tags/definitions";
+inline constexpr const char* kTagsAssignments = "tags/assignments";
+inline constexpr const char* kTagsCollapsed = "tags/collapsed";
+
+/** Tags are stored as a list of names under tags/definitions. */
+inline QStringList tagDefinitions()
+{
+    return QSettings().value(QLatin1String(kTagsDefinitions), QStringList()).toStringList();
+}
+
+inline void setTagDefinitions(const QStringList& tags)
+{
+    setValueSync(kTagsDefinitions, tags);
+}
+
+/** Host-to-tag assignments: tag name → list of profile IDs. */
+inline QHash<QString, QStringList> tagAssignments()
+{
+    const QVariantMap m = QSettings().value(QLatin1String(kTagsAssignments)).toMap();
+    QHash<QString, QStringList> out;
+    for (auto it = m.begin(); it != m.end(); ++it) {
+        out.insert(it.key(), it.value().toStringList());
+    }
+    return out;
+}
+
+inline void setTagAssignments(const QHash<QString, QStringList>& assign)
+{
+    QVariantMap m;
+    for (auto it = assign.begin(); it != assign.end(); ++it) {
+        m.insert(it.key(), QVariant(it.value()));
+    }
+    QSettings s;
+    s.setValue(QLatin1String(kTagsAssignments), m);
+    s.sync();
+}
+
+/** Which tags are collapsed (not expanded). */
+inline QStringList tagCollapsed()
+{
+    return QSettings().value(QLatin1String(kTagsCollapsed), QStringList()).toStringList();
+}
+
+inline void setTagCollapsed(const QStringList& collapsed)
+{
+    setValueSync(kTagsCollapsed, collapsed);
 }
 
 } // namespace AppSettings

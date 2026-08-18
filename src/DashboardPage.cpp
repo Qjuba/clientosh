@@ -33,14 +33,14 @@
 #include <QSysInfo>
 #include <QUuid>
 #include <QHeaderView>
+#include <QTreeWidget>
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QKeySequenceEdit>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
-#include <QNetworkAccessManager>
-#include <QNetworkReply>
+#include <QMenu>
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
@@ -226,16 +226,56 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     hostsLay->setContentsMargins(16, 12, 16, 10);
     hostsLay->setSpacing(8);
 
-    m_savedTable = new QTableWidget(0, 4, m_hostsPage);
-    styleTable(m_savedTable);
-    m_savedTable->setHorizontalHeaderLabels(
-        {QStringLiteral("name"), QStringLiteral("type"), QStringLiteral("auth"), QStringLiteral("")});
-    m_savedTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_savedTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_savedTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    m_savedTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::Fixed);
-    m_savedTable->setColumnWidth(3, 112);
-    hostsLay->addWidget(m_savedTable, 1);
+    m_savedTree = new QTreeWidget(m_hostsPage);
+    m_savedTree->setObjectName(QStringLiteral("dashTable"));
+    m_savedTree->setColumnCount(5);
+    m_savedTree->setHeaderLabels({QStringLiteral("name"), QStringLiteral("type"), QStringLiteral("auth"),
+                                  QStringLiteral("system"), QStringLiteral("")});
+    m_savedTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
+    m_savedTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    m_savedTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_savedTree->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    m_savedTree->header()->setSectionResizeMode(4, QHeaderView::Fixed);
+    m_savedTree->setColumnWidth(4, 0);
+    m_savedTree->setRootIsDecorated(true);
+    m_savedTree->setIndentation(18);
+    m_savedTree->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_savedTree->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_savedTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_savedTree->setFocusPolicy(Qt::NoFocus);
+    m_savedTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_savedTree, &QTreeWidget::customContextMenuRequested, this,
+            [this](const QPoint& pos) {
+                auto* item = m_savedTree->itemAt(pos);
+                if (item && item->parent()) {
+                    // Host row
+                    const QString id = item->data(0, Qt::UserRole).toString();
+                    showHostContextMenu(m_savedTree->viewport()->mapToGlobal(pos), id);
+                } else if (item) {
+                    // Tag header
+                    const QString tag = item->data(0, Qt::UserRole).toString();
+                    showTagContextMenu(m_savedTree->viewport()->mapToGlobal(pos), tag);
+                } else {
+                    // Empty area → Add Tag
+                    showPageContextMenu(m_savedTree->viewport()->mapToGlobal(pos));
+                }
+            });
+    connect(m_savedTree, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* it) {
+        if (it->parent() == nullptr) {
+            m_tagCollapsed.removeAll(it->data(0, Qt::UserRole).toString());
+            AppSettings::setTagCollapsed(m_tagCollapsed);
+        }
+    });
+    connect(m_savedTree, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* it) {
+        if (it->parent() == nullptr) {
+            const QString tag = it->data(0, Qt::UserRole).toString();
+            if (!m_tagCollapsed.contains(tag)) {
+                m_tagCollapsed.append(tag);
+            }
+            AppSettings::setTagCollapsed(m_tagCollapsed);
+        }
+    });
+    hostsLay->addWidget(m_savedTree, 1);
 
     m_savedEmpty = new QLabel(QStringLiteral("no hosts yet — create a session to get started"), m_hostsPage);
     m_savedEmpty->setObjectName(QStringLiteral("dashHint"));
@@ -929,73 +969,41 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         QWidget* sec = buildSettingsSection(QStringLiteral("About"), m_settingsStack);
         auto* aLay = qobject_cast<QVBoxLayout*>(sec->layout());
 
-        auto* appName = new QLabel(QStringLiteral("clientosh"), sec);
+        // Logo — the app's terminal mark, rendered large.
+        auto* logo = new QLabel(sec);
+        logo->setPixmap(QIcon(QStringLiteral(":/icons/terminal.svg")).pixmap(72, 72));
+        logo->setAlignment(Qt::AlignHCenter);
+        logo->setObjectName(QStringLiteral("settingsAboutLogo"));
+
+        // Name
+        auto* appName = new QLabel(QStringLiteral("Clientosh"), sec);
         appName->setObjectName(QStringLiteral("settingsAboutName"));
         appName->setAlignment(Qt::AlignHCenter);
-        auto* appTag = new QLabel(QStringLiteral("Raw dark-gray SSH client (Qt 6 + libssh)"), sec);
-        appTag->setObjectName(QStringLiteral("dashHint"));
-        appTag->setAlignment(Qt::AlignHCenter);
-        appTag->setWordWrap(true);
 
-        m_aboutNet = new QNetworkAccessManager(this);
-
-        // Current version — pulled directly from CMake via the generated version.h.
-        m_aboutCurrentVersion = new QLabel(sec);
+        // Version — pulled directly from CMake via the generated version.h.
+        m_aboutCurrentVersion = new QLabel(
+            QStringLiteral("Version v%1").arg(CLIENTOSH_VERSION), sec);
         m_aboutCurrentVersion->setObjectName(QStringLiteral("settingsAboutVersion"));
+        m_aboutCurrentVersion->setAlignment(Qt::AlignHCenter);
 
-        // Latest version — fetched from GitHub Releases /latest. Defaults to a
-        // neutral "checking…" and never raises an error dialog if it fails.
-        m_aboutLatestVersion = new QLabel(sec);
-        m_aboutLatestVersion->setObjectName(QStringLiteral("dashHint"));
-        m_aboutLatestVersion->setWordWrap(true);
-        m_aboutLatestVersion->setTextInteractionFlags(Qt::TextSelectableByMouse);
-
-        m_aboutRetryBtn = new QPushButton(QStringLiteral("Check again"), sec);
-        m_aboutRetryBtn->setObjectName(QStringLiteral("dashButton"));
-        m_aboutRetryBtn->setFocusPolicy(Qt::NoFocus);
-        m_aboutRetryBtn->setCursor(Qt::PointingHandCursor);
-        connect(m_aboutRetryBtn, &QPushButton::clicked, this, &DashboardPage::checkLatestVersion);
-
-        auto* repoBtn = new QPushButton(QStringLiteral("Open repository on GitHub"), sec);
-        repoBtn->setObjectName(QStringLiteral("dashSecondary"));
-        repoBtn->setFocusPolicy(Qt::NoFocus);
-        repoBtn->setCursor(Qt::PointingHandCursor);
-        connect(repoBtn, &QPushButton::clicked, this, []() {
-            QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/hdmain/clientosh")));
-        });
-
-        auto* starBtn = new QPushButton(QStringLiteral("★ Star this project on GitHub"), sec);
+        auto* starBtn = new QPushButton(QStringLiteral("★ Star on GitHub"), sec);
         starBtn->setObjectName(QStringLiteral("dashPrimary"));
         starBtn->setCursor(Qt::PointingHandCursor);
         starBtn->setFocusPolicy(Qt::NoFocus);
         connect(starBtn, &QPushButton::clicked, this, []() {
             QDesktopServices::openUrl(QUrl(QStringLiteral("https://github.com/hdmain/clientosh")));
         });
-        auto* starHint = new QLabel(
-            QStringLiteral("A star on GitHub is the best way to support clientosh — it only takes a second."),
-            sec);
-        starHint->setObjectName(QStringLiteral("dashHint"));
-        starHint->setWordWrap(true);
-
-        aLay->addSpacing(12);
-        aLay->addWidget(appName);
-        aLay->addWidget(appTag);
-        aLay->addSpacing(20);
-        aLay->addWidget(m_aboutCurrentVersion);
-        aLay->addWidget(m_aboutLatestVersion);
-        aLay->addSpacing(6);
-        aLay->addWidget(m_aboutRetryBtn);
-        aLay->addSpacing(18);
-        aLay->addWidget(repoBtn);
-        aLay->addSpacing(4);
-        aLay->addWidget(starBtn);
-        aLay->addSpacing(6);
-        aLay->addWidget(starHint);
 
         aLay->addStretch(1);
+        aLay->addWidget(logo);
+        aLay->addSpacing(6);
+        aLay->addWidget(appName);
+        aLay->addSpacing(6);
+        aLay->addWidget(m_aboutCurrentVersion);
+        aLay->addSpacing(16);
+        aLay->addWidget(starBtn, 0, Qt::AlignHCenter);
+        aLay->addStretch(1);
 
-        m_aboutCurrentVersion->setText(QStringLiteral("Current version: v%1").arg(CLIENTOSH_VERSION));
-        checkLatestVersion();
         makeScrollPage(sec);
     }
 
@@ -1246,9 +1254,10 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     connect(m_passEdit, &QLineEdit::returnPressed, this, &DashboardPage::connectFromForm);
     connect(m_searchEdit, &QLineEdit::textChanged, this, [this](const QString&) { applySavedFilter(); });
 
-    connect(m_savedTable, &QTableWidget::cellDoubleClicked, this, [this](int row, int) {
-        if (auto* item = m_savedTable->item(row, 0)) {
-            openSavedProfile(item->data(Qt::UserRole).toString());
+    connect(m_savedTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item, int) {
+        if (item && item->parent()) {
+            const QString id = item->data(0, Qt::UserRole).toString();
+            openSavedProfile(id);
         }
     });
     connect(m_sessions, &SessionManager::sessionOpened, this, [this](const QString& id) {
@@ -1270,6 +1279,12 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
             });
     connect(m_sessions, &SessionManager::sessionConnectionChanged, this,
             [this](const QString&, bool) { rebuildActiveList(); });
+    connect(m_sessions, &SessionManager::sessionSystemDetected, this,
+            [this](const QString& sessionId, const QString& system) {
+                if (const auto* live = m_sessions->session(sessionId)) {
+                    setProfileSystem(live->profile.id, system);
+                }
+            });
 
     loadSettingsUi();
     m_navHosts->setChecked(true);
@@ -1322,62 +1337,6 @@ void DashboardPage::setSettingsCategory(int index)
         return;
     }
     m_settingsStack->setCurrentIndex(index);
-}
-
-void DashboardPage::checkLatestVersion()
-{
-    if (!m_aboutNet || !m_aboutLatestVersion || !m_aboutRetryBtn) {
-        return;
-    }
-    m_aboutLatestVersion->setText(QStringLiteral("Latest version: checking…"));
-    m_aboutRetryBtn->setEnabled(false);
-
-    QNetworkRequest request(
-        QUrl(QStringLiteral("https://api.github.com/repos/hdmain/clientosh/releases/latest")));
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("clientosh/") + CLIENTOSH_VERSION);
-    request.setRawHeader("Accept", QByteArrayLiteral("application/vnd.github+json"));
-
-    QNetworkReply* reply = m_aboutNet->get(request);
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        reply->deleteLater();
-        m_aboutRetryBtn->setEnabled(true);
-
-        if (!m_aboutLatestVersion) {
-            return;
-        }
-
-        // Network error, non-200 (incl. "no releases yet" → HTTP 404), or a
-        // malformed payload all resolve to a friendly message instead of crashing.
-        if (reply->error() != QNetworkReply::NoError || reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt() != 200) {
-            m_aboutLatestVersion->setText(QStringLiteral(
-                "Latest version: unavailable (no released versions yet or no connection). "
-                "This is normal — %1 is the first release on the way.")
-                                              .arg(CLIENTOSH_VERSION));
-            return;
-        }
-
-        const QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
-        const QString tagName =
-            doc.isObject() ? doc.object().value(QStringLiteral("tag_name")).toString() : QString();
-        QString tag = tagName.trimmed();
-        if (!tag.isEmpty() && tag.at(0) == QLatin1Char('v')) {
-            tag = tag.mid(1);
-        }
-
-        if (tag.isEmpty()) {
-            m_aboutLatestVersion->setText(QStringLiteral(
-                "Latest version: unavailable (no released versions yet). "
-                "This is normal — %1 is the first release on the way.")
-                                              .arg(CLIENTOSH_VERSION));
-            return;
-        }
-
-        const QString current = QStringLiteral(CLIENTOSH_VERSION);
-        const bool upToDate = tag == current;
-        m_aboutLatestVersion->setText(upToDate
-                                          ? QStringLiteral("Latest version: v%1 — you are up to date.").arg(tag)
-                                          : QStringLiteral("Latest version: v%1 — update available.").arg(tag));
-    });
 }
 
 void DashboardPage::populateFontCombos()
@@ -1987,66 +1946,125 @@ void DashboardPage::deleteSavedProfile(const QString& profileId)
     appendLog(QStringLiteral("deleted profile %1").arg(title));
 }
 
+void DashboardPage::setProfileSystem(const QString& profileId, const QString& system)
+{
+    const int row = profileIndexById(profileId);
+    if (row < 0) {
+        return;
+    }
+    if (m_profiles[row].system == system) {
+        return;
+    }
+    m_profiles[row].system = system;
+    saveProfiles(m_profiles);
+    rebuildSavedList();
+}
+
 void DashboardPage::rebuildSavedList()
 {
-    m_savedTable->setRowCount(0);
+    if (!m_savedTree) {
+        return;
+    }
+    m_savedTree->clear();
+
+    // Reload tag state from disk (assignments + collapse).
+    m_tags = AppSettings::tagDefinitions();
+    m_tagAssignments = AppSettings::tagAssignments();
+    m_tagCollapsed = AppSettings::tagCollapsed();
+
+    // Map profileId → tag (first tag that contains it).
+    QHash<QString, QString> profileTag;
+    for (const QString& tag : m_tags) {
+        for (const QString& id : m_tagAssignments.value(tag)) {
+            if (!profileTag.contains(id)) {
+                profileTag.insert(id, tag);
+            }
+        }
+    }
+
+    // Build one top-level section per tag, then an "Untagged" section.
+    struct Section {
+        QString title;
+        QString tagName; // empty for Untagged
+        QVector<SessionProfile> profiles;
+    };
+    QVector<Section> sections;
+    for (const QString& tag : m_tags) {
+        Section s;
+        s.title = tag;
+        s.tagName = tag;
+        sections.append(s);
+    }
+    Section untagged;
+    untagged.title = QStringLiteral("Untagged");
 
     for (const SessionProfile& p : m_profiles) {
-        const int row = m_savedTable->rowCount();
-        m_savedTable->insertRow(row);
-
-        auto* nameItem = new QTableWidgetItem(p.displayTitle());
-        nameItem->setData(Qt::UserRole, p.id);
-        nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-
-        auto* typeItem = new QTableWidgetItem(p.connectionTypeLabel());
-        typeItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        typeItem->setForeground(p.isSftpOnly() ? QColor(0x9a, 0x9a, 0x9a) : QColor(0x8a, 0x8a, 0x8a));
-
-        QString auth = QStringLiteral("password");
-        if (p.usesPrivateKey() && p.savePassword) {
-            auth = QStringLiteral("key + pass");
-        } else if (p.usesPrivateKey()) {
-            auth = QStringLiteral("private key");
-        } else if (!p.savePassword) {
-            auth = QStringLiteral("prompt");
+        const QString tag = profileTag.value(p.id);
+        bool placed = false;
+        for (Section& s : sections) {
+            if (s.tagName == tag) {
+                s.profiles.append(p);
+                placed = true;
+                break;
+            }
         }
-        auto* authItem = new QTableWidgetItem(auth);
-        authItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        authItem->setForeground(QColor(0x7a, 0x7a, 0x7a));
+        if (!placed) {
+            untagged.profiles.append(p);
+        }
+    }
 
-        m_savedTable->setItem(row, 0, nameItem);
-        m_savedTable->setItem(row, 1, typeItem);
-        m_savedTable->setItem(row, 2, authItem);
+    if (!untagged.profiles.isEmpty()) {
+        sections.append(untagged);
+    }
 
-        auto* actions = new QWidget(m_savedTable);
-        actions->setObjectName(QStringLiteral("dashRowActions"));
-        auto* lay = new QHBoxLayout(actions);
-        lay->setContentsMargins(2, 0, 4, 0);
-        lay->setSpacing(1);
-        lay->addStretch(1);
+    // Only show sections that have hosts (or, for tags, keep empty tags visible
+    // so the user can manage them).
+    for (const Section& s : sections) {
+        if (s.profiles.isEmpty() && s.tagName.isEmpty()) {
+            continue;
+        }
+        auto* header = new QTreeWidgetItem(m_savedTree);
+        header->setText(0, s.profiles.isEmpty()
+                               ? QStringLiteral("%1").arg(s.title)
+                               : QStringLiteral("%1  (%2)").arg(s.title).arg(s.profiles.size()));
+        header->setData(0, Qt::UserRole, s.tagName);
+        header->setFlags(Qt::ItemIsEnabled);
+        QFont hf = header->font(0);
+        hf.setBold(true);
+        if (hf.pointSize() > 0) {
+            hf.setPointSize(qMax(10, hf.pointSize() + 2));
+        }
+        header->setFont(0, hf);
+        header->setForeground(0, QColor(0xc8, 0xc8, 0xc8));
+        header->setSizeHint(0, QSize(0, 30));
 
-        const QString id = p.id;
-        auto* openBtn = makeRowIcon(p.isSftpOnly() ? QStringLiteral(":/icons/folder.svg")
-                                                   : QStringLiteral(":/icons/connect.svg"),
-                                    p.isSftpOnly() ? QStringLiteral("open sftp")
-                                                   : QStringLiteral("connect"),
-                                    actions);
-        auto* sftpBtn = makeRowIcon(QStringLiteral(":/icons/folder.svg"), QStringLiteral("sftp"), actions);
-        auto* editBtn = makeRowIcon(QStringLiteral(":/icons/edit.svg"), QStringLiteral("edit"), actions);
-        auto* delBtn = makeRowIcon(QStringLiteral(":/icons/close.svg"), QStringLiteral("delete"), actions);
-        sftpBtn->setVisible(!p.isSftpOnly());
+        for (const SessionProfile& p : s.profiles) {
+            auto* child = new QTreeWidgetItem(header);
+            child->setText(0, p.displayTitle());
+            child->setData(0, Qt::UserRole, p.id);
+            child->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
 
-        connect(openBtn, &QToolButton::clicked, this, [this, id]() { openSavedProfile(id); });
-        connect(sftpBtn, &QToolButton::clicked, this, [this, id]() { sftpSavedProfile(id); });
-        connect(editBtn, &QToolButton::clicked, this, [this, id]() { showEditSessionForm(id); });
-        connect(delBtn, &QToolButton::clicked, this, [this, id]() { deleteSavedProfile(id); });
+            child->setText(1, p.connectionTypeLabel());
+            child->setForeground(1, p.isSftpOnly() ? QColor(0x9a, 0x9a, 0x9a) : QColor(0x8a, 0x8a, 0x8a));
 
-        lay->addWidget(openBtn);
-        lay->addWidget(sftpBtn);
-        lay->addWidget(editBtn);
-        lay->addWidget(delBtn);
-        m_savedTable->setCellWidget(row, 3, actions);
+            QString auth = QStringLiteral("password");
+            if (p.usesPrivateKey() && p.savePassword) {
+                auth = QStringLiteral("key + pass");
+            } else if (p.usesPrivateKey()) {
+                auth = QStringLiteral("private key");
+            } else if (!p.savePassword) {
+                auth = QStringLiteral("prompt");
+            }
+            child->setText(2, auth);
+            child->setForeground(2, QColor(0x7a, 0x7a, 0x7a));
+
+            child->setText(3, p.systemLabel());
+            child->setForeground(3, QColor(0x7a, 0x7a, 0x7a));
+        }
+
+        // Restore collapsed state.
+        const bool collapsed = m_tagCollapsed.contains(s.tagName);
+        header->setExpanded(!collapsed);
     }
 
     applySavedFilter();
@@ -2054,52 +2072,284 @@ void DashboardPage::rebuildSavedList()
 
 void DashboardPage::applySavedFilter()
 {
+    if (!m_savedTree) {
+        return;
+    }
     const QString q = m_searchEdit->text().trimmed();
     int visible = 0;
-    for (int row = 0; row < m_savedTable->rowCount(); ++row) {
-        bool match = q.isEmpty();
-        if (!match) {
-            for (int col = 0; col < 3; ++col) {
-                if (auto* item = m_savedTable->item(row, col)) {
-                    if (item->text().contains(q, Qt::CaseInsensitive)) {
+
+    for (int i = 0; i < m_savedTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* header = m_savedTree->topLevelItem(i);
+        bool anyMatch = q.isEmpty();
+        int childVisible = 0;
+
+        for (int c = 0; c < header->childCount(); ++c) {
+            QTreeWidgetItem* child = header->child(c);
+            const QString id = child->data(0, Qt::UserRole).toString();
+            bool match = q.isEmpty();
+            if (!match) {
+                const int idx = profileIndexById(id);
+                if (idx >= 0) {
+                    const SessionProfile& p = m_profiles[idx];
+                    if (p.displayTitle().contains(q, Qt::CaseInsensitive)
+                        || p.connectionTypeLabel().contains(q, Qt::CaseInsensitive)
+                        || p.host.contains(q, Qt::CaseInsensitive)
+                        || p.user.contains(q, Qt::CaseInsensitive)
+                        || p.endpoint().contains(q, Qt::CaseInsensitive)) {
                         match = true;
-                        break;
                     }
                 }
             }
-            // Also match hidden host/user (IP not shown in the table).
-            if (!match) {
-                if (auto* item = m_savedTable->item(row, 0)) {
-                    const int idx = profileIndexById(item->data(Qt::UserRole).toString());
-                    if (idx >= 0) {
-                        const SessionProfile& p = m_profiles[idx];
-                        if (p.host.contains(q, Qt::CaseInsensitive)
-                            || p.user.contains(q, Qt::CaseInsensitive)
-                            || p.endpoint().contains(q, Qt::CaseInsensitive)) {
-                            match = true;
-                        }
-                    }
-                }
+            child->setHidden(!match);
+            if (match) {
+                ++childVisible;
+                ++visible;
             }
         }
-        m_savedTable->setRowHidden(row, !match);
-        if (match) {
-            ++visible;
+
+        // A tag header stays visible if it has any matching host, or if there is
+        // no active filter (so empty tags remain manageable).
+        const bool headerVisible = (q.isEmpty() && header->childCount() >= 0) || childVisible > 0;
+        header->setHidden(!headerVisible);
+        if (headerVisible) {
+            anyMatch = childVisible > 0;
+        }
+        if (anyMatch && headerVisible) {
+            // Keep header expanded when filtering so matches are visible.
+            if (!q.isEmpty()) {
+                header->setExpanded(true);
+            }
         }
     }
 
     if (m_profiles.isEmpty()) {
-        m_savedTable->hide();
+        m_savedTree->hide();
         m_savedEmpty->setText(QStringLiteral("no hosts yet — create a session to get started"));
         m_savedEmpty->show();
-    } else if (visible == 0) {
-        m_savedTable->show();
+    } else if (visible == 0 && !q.isEmpty()) {
+        m_savedTree->show();
         m_savedEmpty->setText(QStringLiteral("no hosts match the filter"));
         m_savedEmpty->show();
     } else {
-        m_savedTable->show();
+        m_savedTree->show();
         m_savedEmpty->hide();
     }
+}
+
+QStringList DashboardPage::currentTags() const
+{
+    return m_tags;
+}
+
+void DashboardPage::persistTagCollapseState()
+{
+    AppSettings::setTagCollapsed(m_tagCollapsed);
+}
+
+void DashboardPage::addTagDialog()
+{
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        this, QStringLiteral("Add Tag"), QStringLiteral("Tag name:"), QLineEdit::Normal, QString(), &ok);
+    const QString trimmed = name.trimmed();
+    if (!ok || trimmed.isEmpty()) {
+        return;
+    }
+    if (m_tags.contains(trimmed)) {
+        m_hint->setText(QStringLiteral("tag '%1' already exists").arg(trimmed));
+        return;
+    }
+    m_tags.append(trimmed);
+    AppSettings::setTagDefinitions(m_tags);
+    m_tagAssignments.insert(trimmed, QStringList());
+    AppSettings::setTagAssignments(m_tagAssignments);
+    rebuildSavedList();
+    m_hint->setText(QStringLiteral("added tag '%1'").arg(trimmed));
+    appendLog(QStringLiteral("added tag %1").arg(trimmed));
+}
+
+void DashboardPage::renameTagDialog(const QString& tagName)
+{
+    if (tagName.isEmpty()) {
+        return;
+    }
+    bool ok = false;
+    const QString name = QInputDialog::getText(
+        this, QStringLiteral("Rename Tag"), QStringLiteral("New name:"), QLineEdit::Normal, tagName, &ok);
+    const QString trimmed = name.trimmed();
+    if (!ok || trimmed.isEmpty() || trimmed == tagName) {
+        return;
+    }
+    if (m_tags.contains(trimmed)) {
+        m_hint->setText(QStringLiteral("tag '%1' already exists").arg(trimmed));
+        return;
+    }
+    const int idx = m_tags.indexOf(tagName);
+    if (idx < 0) {
+        return;
+    }
+    m_tags[idx] = trimmed;
+    AppSettings::setTagDefinitions(m_tags);
+    m_tagAssignments.insert(trimmed, m_tagAssignments.take(tagName));
+    AppSettings::setTagAssignments(m_tagAssignments);
+    if (m_tagCollapsed.contains(tagName)) {
+        m_tagCollapsed.removeAll(tagName);
+        m_tagCollapsed.append(trimmed);
+        AppSettings::setTagCollapsed(m_tagCollapsed);
+    }
+    rebuildSavedList();
+    m_hint->setText(QStringLiteral("renamed tag to '%1'").arg(trimmed));
+    appendLog(QStringLiteral("renamed tag %1 → %2").arg(tagName, trimmed));
+}
+
+void DashboardPage::deleteTag(const QString& tagName)
+{
+    if (tagName.isEmpty()) {
+        return;
+    }
+    const auto ret = QMessageBox::question(
+        this, QStringLiteral("Delete Tag"),
+        QStringLiteral("Delete tag '%1'? Hosts in this tag will become untagged.").arg(tagName),
+        QMessageBox::Yes | QMessageBox::No, QMessageBox::No);
+    if (ret != QMessageBox::Yes) {
+        return;
+    }
+    m_tags.removeAll(tagName);
+    AppSettings::setTagDefinitions(m_tags);
+    m_tagAssignments.remove(tagName);
+    AppSettings::setTagAssignments(m_tagAssignments);
+    m_tagCollapsed.removeAll(tagName);
+    AppSettings::setTagCollapsed(m_tagCollapsed);
+    rebuildSavedList();
+    m_hint->setText(QStringLiteral("deleted tag '%1'").arg(tagName));
+    appendLog(QStringLiteral("deleted tag %1").arg(tagName));
+}
+
+void DashboardPage::moveProfileToTag(const QString& profileId, const QString& tagName)
+{
+    if (profileId.isEmpty()) {
+        return;
+    }
+    // Remove the profile from every tag.
+    for (auto it = m_tagAssignments.begin(); it != m_tagAssignments.end(); ++it) {
+        it.value().removeAll(profileId);
+    }
+    if (!tagName.isEmpty()) {
+        if (!m_tags.contains(tagName)) {
+            return;
+        }
+        QStringList& list = m_tagAssignments[tagName];
+        if (!list.contains(profileId)) {
+            list.append(profileId);
+        }
+    }
+    AppSettings::setTagAssignments(m_tagAssignments);
+    rebuildSavedList();
+}
+
+void DashboardPage::removeProfileFromTag(const QString& profileId)
+{
+    moveProfileToTag(profileId, QString());
+}
+
+void DashboardPage::showPageContextMenu(const QPoint& globalPos)
+{
+    QMenu menu(this);
+    auto* addTag = menu.addAction(QStringLiteral("Add Tag"));
+    connect(addTag, &QAction::triggered, this, [this]() { addTagDialog(); });
+    menu.exec(globalPos);
+}
+
+void DashboardPage::showTagContextMenu(const QPoint& globalPos, const QString& tagName)
+{
+    QMenu menu(this);
+    auto* addHost = menu.addAction(QStringLiteral("Add Host to Tag"));
+    connect(addHost, &QAction::triggered, this, [this, tagName]() {
+        // Let the user pick an existing host to add to this tag.
+        QStringList hostNames;
+        for (const SessionProfile& p : m_profiles) {
+            hostNames << QStringLiteral("%1 (%2)").arg(p.displayTitle(), p.host);
+        }
+        if (hostNames.isEmpty()) {
+            m_hint->setText(QStringLiteral("no hosts to add"));
+            return;
+        }
+        bool ok = false;
+        const QString choice = QInputDialog::getItem(
+            this, QStringLiteral("Add Host to Tag"),
+            QStringLiteral("Choose a host to add to '%1':").arg(tagName), hostNames, 0, false, &ok);
+        if (!ok || choice.isEmpty()) {
+            return;
+        }
+        const int idx = hostNames.indexOf(choice);
+        if (idx < 0 || idx >= m_profiles.size()) {
+            return;
+        }
+        const QString id = m_profiles[idx].id;
+        QStringList& list = m_tagAssignments[tagName];
+        if (!list.contains(id)) {
+            list.append(id);
+        }
+        AppSettings::setTagAssignments(m_tagAssignments);
+        rebuildSavedList();
+    });
+    menu.addSeparator();
+    auto* rename = menu.addAction(QStringLiteral("Rename Tag"));
+    connect(rename, &QAction::triggered, this, [this, tagName]() { renameTagDialog(tagName); });
+    auto* del = menu.addAction(QStringLiteral("Delete Tag"));
+    connect(del, &QAction::triggered, this, [this, tagName]() { deleteTag(tagName); });
+    menu.exec(globalPos);
+}
+
+void DashboardPage::showHostContextMenu(const QPoint& globalPos, const QString& profileId)
+{
+    const int row = profileIndexById(profileId);
+    if (row < 0) {
+        return;
+    }
+    const SessionProfile& p = m_profiles[row];
+
+    QMenu menu(this);
+
+    // Move → submenu of tags (plus Untagged).
+    auto* moveMenu = menu.addMenu(QStringLiteral("Move"));
+    QStringList tags = m_tags;
+    for (const QString& tag : tags) {
+        auto* act = moveMenu->addAction(tag);
+        connect(act, &QAction::triggered, this, [this, profileId, tag]() {
+            moveProfileToTag(profileId, tag);
+        });
+    }
+    moveMenu->addSeparator();
+    auto* untag = moveMenu->addAction(QStringLiteral("Untagged"));
+    connect(untag, &QAction::triggered, this, [this, profileId]() {
+        removeProfileFromTag(profileId);
+    });
+
+    menu.addSeparator();
+
+    auto* edit = menu.addAction(QStringLiteral("Edit"));
+    connect(edit, &QAction::triggered, this, [this, profileId]() { showEditSessionForm(profileId); });
+
+    auto* del = menu.addAction(QStringLiteral("Delete"));
+    connect(del, &QAction::triggered, this, [this, profileId]() { deleteSavedProfile(profileId); });
+
+    menu.addSeparator();
+
+    auto* ssh = menu.addAction(QStringLiteral("Connect via SSH"));
+    connect(ssh, &QAction::triggered, this, [this, profileId]() { openSavedProfile(profileId); });
+
+    auto* sftp = menu.addAction(QStringLiteral("Connect via SFTP"));
+    connect(sftp, &QAction::triggered, this, [this, profileId]() { sftpSavedProfile(profileId); });
+
+    menu.addSeparator();
+
+    auto* copyHost = menu.addAction(QStringLiteral("Copy Hostname"));
+    connect(copyHost, &QAction::triggered, this, [p]() {
+        QApplication::clipboard()->setText(p.host);
+    });
+
+    menu.exec(globalPos);
 }
 
 void DashboardPage::rebuildActiveList()

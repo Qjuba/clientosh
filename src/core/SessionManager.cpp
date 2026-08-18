@@ -104,6 +104,13 @@ void SessionManager::wireSession(LiveSession* live)
         }
     });
 
+    connect(live->ssh, &SshSession::systemDetected, this, [this, id](const QString& system) {
+        if (auto* s = session(id)) {
+            s->profile.system = system;
+        }
+        emit sessionSystemDetected(id, system);
+    });
+
     connect(live->ssh, &SshSession::disconnected, this, [this, id]() {
         if (auto* s = session(id)) {
             s->connected = false;

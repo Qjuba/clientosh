@@ -32,7 +32,65 @@ constexpr const char* kClassicKeyExchange =
     "diffie-hellman-group-exchange-sha256,"
     "diffie-hellman-group16-sha512,diffie-hellman-group18-sha512,"
     "diffie-hellman-group14-sha256";
+
+/** Infer a short OS label from an SSH server banner string. Unknown → empty. */
+QString detectSystemFromBanner(ssh_session session)
+{
+    QByteArray banner;
+    if (const char* b = ssh_get_serverbanner(session)) {
+        banner = QByteArray(b);
+    }
+    const QByteArray low = banner.toLower();
+
+    if (low.contains("ubuntu")) {
+        return QStringLiteral("Ubuntu");
+    }
+    if (low.contains("debian")) {
+        return QStringLiteral("Debian");
+    }
+    if (low.contains("raspbian") || low.contains("raspberry")) {
+        return QStringLiteral("Raspbian");
+    }
+    if (low.contains("kali")) {
+        return QStringLiteral("Kali");
+    }
+    if (low.contains("arch")) {
+        return QStringLiteral("Arch");
+    }
+    if (low.contains("fedora")) {
+        return QStringLiteral("Fedora");
+    }
+    if (low.contains("centos")) {
+        return QStringLiteral("CentOS");
+    }
+    if (low.contains("red hat") || low.contains("rhel")) {
+        return QStringLiteral("Red Hat");
+    }
+    if (low.contains("suse") || low.contains("opensuse")) {
+        return QStringLiteral("openSUSE");
+    }
+    if (low.contains("freebsd")) {
+        return QStringLiteral("FreeBSD");
+    }
+    if (low.contains("openbsd")) {
+        return QStringLiteral("OpenBSD");
+    }
+    if (low.contains("netbsd")) {
+        return QStringLiteral("NetBSD");
+    }
+    if (low.contains("linux")) {
+        return QStringLiteral("Linux");
+    }
+    if (low.contains("apple") || low.contains("darwin") || low.contains("macos")
+        || low.contains("mac os")) {
+        return QStringLiteral("macOS");
+    }
+    if (low.contains("microsoft") || low.contains("windows") || low.contains("wilco")) {
+        return QStringLiteral("Windows");
+    }
+    return {};
 }
+} // namespace
 
 SshSession::SshSession(QObject* parent)
     : QThread(parent)
@@ -296,6 +354,8 @@ void SshSession::run()
             }
             goto after_attempt;
         }
+
+        emit systemDetected(detectSystemFromBanner(session));
 
         if (stopRequested()) {
             cleanup();

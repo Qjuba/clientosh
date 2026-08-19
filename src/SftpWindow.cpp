@@ -319,7 +319,9 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
                 m_status->setText(QStringLiteral("transfers cancelled"));
             } else if (!ok) {
                 m_status->setText(msg);
-                QMessageBox::warning(this, QStringLiteral("sftp"), msg);
+                if (!wasCancelling && !msg.startsWith(QStringLiteral("cancelled"), Qt::CaseInsensitive)) {
+                    QMessageBox::warning(this, QStringLiteral("sftp"), msg);
+                }
             } else if (m_queuedItems > 1) {
                 m_status->setText(QStringLiteral("%1 of %2 transferred")
                                       .arg(m_doneItems)
@@ -344,7 +346,7 @@ SftpWindow::SftpWindow(const QString& sessionId, const SessionProfile& profile, 
             m_status->setText(QStringLiteral("transfers cancelled"));
             refresh();
         } else {
-            if (!ok) {
+            if (!ok && !wasCancelling && !msg.startsWith(QStringLiteral("cancelled"), Qt::CaseInsensitive)) {
                 m_status->setText(msg);
                 QMessageBox::warning(this, QStringLiteral("sftp"), msg);
             }
@@ -744,24 +746,20 @@ void SftpWindow::uploadLocalPathsTo(const QStringList& paths, const QString& rem
 
 void SftpWindow::cancelTransfers()
 {
-    if (m_xfer) {
-        QMetaObject::invokeMethod(m_xfer, "cancel", Qt::QueuedConnection);
-        m_status->setText(QStringLiteral("cancelling…"));
-        m_cancelBtn->hide();
-    }
-    if (!m_busy && !m_transferInFlight && !m_xfer) {
-        m_cancelBtn->hide();
-        return;
-    }
     m_cancelling = true;
-    m_cancelBtn->hide();
-    emit debugLog(QStringLiteral("cancelTransfers: cancelling active transfers, dropping %1 queued items")
-                      .arg(m_transferQueue.size()));
     m_transferQueue.clear();
     m_doneItems = 0;
     m_queuedItems = 0;
-    QMetaObject::invokeMethod(m_client, "cancelTransfer", Qt::QueuedConnection);
     m_status->setText(QStringLiteral("cancelling…"));
+
+    if (m_xfer) {
+        m_xfer->requestCancel();
+    }
+    if (m_client) {
+        m_client->requestCancelTransfer();
+    }
+
+    emit debugLog(QStringLiteral("cancelTransfers: requested cancel for active transfers"));
 }
 
 void SftpWindow::pumpQueue()
@@ -1224,15 +1222,17 @@ void SftpWindow::startCrossTransfer(const QVector<SftpCrossEntry>& entries,
         m_status->setText(line);
     });
     connect(m_xfer, &SftpCrossTransfer::finished, this, [this](bool ok, const QString& msg) {
-        // Tear down worker before touching UI that may start another xfer.
+        const bool wasCancelling = m_cancelling
+            || msg.startsWith(QStringLiteral("cancelled"), Qt::CaseInsensitive);
+        m_cancelling = false;
         cleanupXfer();
         m_progress->hide();
         m_cancelBtn->hide();
         m_progress->setRange(0, 100);
         m_progress->setValue(0);
         setBusy(false);
-        m_status->setText(msg);
-        if (!ok) {
+        m_status->setText(wasCancelling ? QStringLiteral("transfers cancelled") : msg);
+        if (!ok && !wasCancelling) {
             QMessageBox::warning(this, QStringLiteral("transfer"), msg);
         }
         refresh();
@@ -1260,8 +1260,7 @@ void SftpWindow::startCrossTransfer(const QVector<SftpCrossEntry>& entries,
 void SftpWindow::cleanupXfer()
 {
     if (m_xfer) {
-        // Do not delete directly — it lives on m_xferThread; request cancel then quit.
-        QMetaObject::invokeMethod(m_xfer, "cancel", Qt::QueuedConnection);
+        m_xfer->requestCancel();
     }
     if (m_xferThread) {
         m_xferThread->quit();

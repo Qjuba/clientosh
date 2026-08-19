@@ -29,6 +29,8 @@ public slots:
                        const SessionProfile& destProfile,
                        const QString& destDir,
                        const QString& stagingRoot);
+    /** Thread-safe — may be called from the UI thread during an active transfer. */
+    void requestCancel();
     void cancel();
 
 signals:

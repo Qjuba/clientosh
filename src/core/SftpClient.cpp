@@ -147,9 +147,14 @@ void SftpClient::setVerboseEnabled(bool enabled)
     vlog(enabled ? QStringLiteral("verbose logging enabled") : QStringLiteral("verbose logging disabled"));
 }
 
-void SftpClient::cancelTransfer()
+void SftpClient::requestCancelTransfer()
 {
     m_cancelRequested.storeRelaxed(true);
+}
+
+void SftpClient::cancelTransfer()
+{
+    requestCancelTransfer();
 }
 
 
@@ -671,6 +676,14 @@ void SftpClient::uploadFile(const QString& localPath, const QString& remotePath)
         }
         qint64 off = 0;
         while (off < n) {
+            if (isCancelled()) {
+                sftp_close(file);
+                in.close();
+                vlog(QStringLiteral("uploadFile: cancelled remote='%1' during write").arg(remote));
+                emit transferFinished(false, QStringLiteral("cancelled %1 (%2 bytes)").arg(remote).arg(done + off));
+                emit statusChanged(QStringLiteral("upload cancelled"));
+                return;
+            }
             const ssize_t w = sftp_write(file, buffer + off, static_cast<size_t>(n - off));
             if (w < 0) {
                 const QString detail = sftpErrorString();
@@ -876,6 +889,14 @@ bool SftpClient::uploadPathRec(const QString& localPath, const QString& remoteDi
         }
         qint64 off = 0;
         while (off < n) {
+            if (isCancelled()) {
+                sftp_close(file);
+                in.close();
+                vlog(QStringLiteral("uploadPathRec: cancelled remote='%1' during write").arg(remote));
+                emit transferFinished(false, QStringLiteral("cancelled %1 (%2 bytes)").arg(remote).arg(done + off));
+                emit statusChanged(QStringLiteral("upload cancelled"));
+                return false;
+            }
             const ssize_t w = sftp_write(file, buffer + off, static_cast<size_t>(n - off));
             if (w < 0) {
                 const QString detail = sftpErrorString();

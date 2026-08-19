@@ -25,6 +25,7 @@ public:
     void refresh();
     void syncActiveChip();
     void applySettings();
+    void setAlwaysOnTopChecked(bool on);
 
 signals:
     void dashboardRequested();
@@ -33,6 +34,7 @@ signals:
     void panelCloseRequested(const PanelRef& ref);
     void panelPreviewRequested(const PanelRef& ref);
     void sftpRequested();
+    void alwaysOnTopToggled(bool on);
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
@@ -52,6 +54,7 @@ private:
     QWidget* m_tabsHost = nullptr;
     QToolButton* m_menuBtn = nullptr;
     QToolButton* m_newBtn = nullptr;
+    QToolButton* m_pinBtn = nullptr;
     QToolButton* m_sftpBtn = nullptr;
     QLabel* m_stats = nullptr;
     bool m_statsHaveData = false;

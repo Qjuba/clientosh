@@ -48,6 +48,7 @@ private:
     void createSftpPane(const QString& panelId, const SessionProfile& profile);
     void wireSessionTerminal(const QString& id, TerminalWidget* term);
     TerminalWidget* findTerminal(const QString& id) const;
+    void applyAlwaysOnTop(bool on);
 
     SessionManager* m_sessions = nullptr;
     TopNavBar* m_topNav = nullptr;

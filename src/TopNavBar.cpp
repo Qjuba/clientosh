@@ -12,6 +12,7 @@
 #include <QLabel>
 #include <QMetaObject>
 #include <QMimeData>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QThread>
 #include <QToolButton>
@@ -79,6 +80,9 @@ TopNavBar::TopNavBar(SessionManager* sessions, SessionWorkspace* workspace, QWid
     m_newBtn = makeNavIcon(QStringLiteral(":/icons/plus.svg"), QStringLiteral("new session"), this);
     m_sftpBtn = makeNavIcon(QStringLiteral(":/icons/folder.svg"),
                             QStringLiteral("open standalone sftp · duplicates active sftp"), this);
+    m_pinBtn = makeNavIcon(QStringLiteral(":/icons/always-on-top.svg"),
+                           QStringLiteral("always on top"), this);
+    m_pinBtn->setCheckable(true);
 
     m_tabsHost = new QWidget(this);
     m_tabsHost->setAcceptDrops(true);
@@ -97,6 +101,7 @@ TopNavBar::TopNavBar(SessionManager* sessions, SessionWorkspace* workspace, QWid
     navLay->addSpacing(4);
     navLay->addWidget(m_tabsHost, 1);
     navLay->addWidget(m_stats, 0);
+    navLay->addWidget(m_pinBtn);
     navLay->addWidget(m_sftpBtn);
 
     m_statsThread = new QThread(this);
@@ -114,6 +119,11 @@ TopNavBar::TopNavBar(SessionManager* sessions, SessionWorkspace* workspace, QWid
     connect(m_newBtn, &QToolButton::clicked, this, &TopNavBar::newSessionRequested);
     connect(m_sftpBtn, &QToolButton::clicked, this, [this]() {
         emit sftpRequested();
+    });
+    connect(m_pinBtn, &QToolButton::toggled, this, [this](bool on) {
+        m_pinBtn->setToolTip(on ? QStringLiteral("always on top · on")
+                                : QStringLiteral("always on top"));
+        emit alwaysOnTopToggled(on);
     });
 
     connect(m_sessions, &SessionManager::sessionOpened, this, [this](const QString&) { refresh(); });
@@ -258,6 +268,17 @@ void TopNavBar::applySettings()
         QMetaObject::invokeMethod(m_statsClient, "stop", Qt::QueuedConnection);
     }
     syncStatsProbe();
+}
+
+void TopNavBar::setAlwaysOnTopChecked(bool on)
+{
+    if (!m_pinBtn) {
+        return;
+    }
+    const QSignalBlocker block(m_pinBtn);
+    m_pinBtn->setChecked(on);
+    m_pinBtn->setToolTip(on ? QStringLiteral("always on top · on")
+                            : QStringLiteral("always on top"));
 }
 
 void TopNavBar::refresh()

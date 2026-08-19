@@ -52,6 +52,7 @@ inline constexpr const char* kShortcutOpenSftpEnabled = "settings/shortcutOpenSf
 inline constexpr const char* kShortcutFontLargerEnabled = "settings/shortcutFontLargerEnabled";
 inline constexpr const char* kShortcutFontSmallerEnabled = "settings/shortcutFontSmallerEnabled";
 inline constexpr const char* kShortcutFontResetEnabled = "settings/shortcutFontResetEnabled";
+inline constexpr const char* kAlwaysOnTop = "window/alwaysOnTop";
 
 inline QColor colorFromSetting(const char* key, const QColor& fallback)
 {
@@ -213,6 +214,16 @@ inline int statsIntervalSec()
 inline bool showServerStats()
 {
     return QSettings().value(QLatin1String(kShowServerStats), true).toBool();
+}
+
+inline bool alwaysOnTop()
+{
+    return QSettings().value(QLatin1String(kAlwaysOnTop), false).toBool();
+}
+
+inline void setAlwaysOnTop(bool on)
+{
+    setValueSync(kAlwaysOnTop, on);
 }
 
 /** "details" (name/size/type) or "compact" (name/size). */

@@ -38,6 +38,8 @@ public slots:
     void removePath(const QString& path, bool isDir);
     void renamePath(const QString& from, const QString& to);
     void setVerboseEnabled(bool enabled);
+    /** Thread-safe — may be called from the UI thread during an active transfer. */
+    void requestCancelTransfer();
     void cancelTransfer();
 
 signals:

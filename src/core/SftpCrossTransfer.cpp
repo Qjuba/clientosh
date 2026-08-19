@@ -405,6 +405,11 @@ bool SftpCrossTransfer::uploadFile(void* sftpVoid, const QString& local, const Q
         }
         qint64 off = 0;
         while (off < n) {
+            if (isCancelled()) {
+                sftp_close(file);
+                in.close();
+                return false;
+            }
             const ssize_t w = sftp_write(file, buf + off, static_cast<size_t>(n - off));
             if (w < 0) {
                 sftp_close(file);
@@ -449,9 +454,14 @@ bool SftpCrossTransfer::uploadDirContents(void* destSftp, const QString& localDi
     return true;
 }
 
-void SftpCrossTransfer::cancel()
+void SftpCrossTransfer::requestCancel()
 {
     m_cancelled.storeRelaxed(true);
+}
+
+void SftpCrossTransfer::cancel()
+{
+    requestCancel();
 }
 
 void SftpCrossTransfer::startTransfer(const SessionProfile& sourceProfile,

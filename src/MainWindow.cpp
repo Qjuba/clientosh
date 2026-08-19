@@ -90,7 +90,6 @@ MainWindow::MainWindow(QWidget* parent)
         showWorkspace();
         m_topNav->syncActiveChip();
     });
-    // Duplicate SFTP for active panel or open SFTP for active SSH session.
     connect(m_topNav, &TopNavBar::sftpRequested, this, [this]() {
         const PanelRef active = m_workspace->activePanel();
         if (active.isValid() && active.kind == PanelKind::Sftp) {
@@ -111,6 +110,10 @@ MainWindow::MainWindow(QWidget* parent)
                 openStandaloneSftp(any->profile());
             }
         }
+    });
+    connect(m_topNav, &TopNavBar::alwaysOnTopToggled, this, [this](bool on) {
+        AppSettings::setAlwaysOnTop(on);
+        applyAlwaysOnTop(on);
     });
 
     connect(m_workspace, &SessionWorkspace::sessionSelectRequested, this, &MainWindow::openOrFocusSession);
@@ -189,7 +192,24 @@ MainWindow::MainWindow(QWidget* parent)
 
     applyTheme();
     setupShortcuts();
+    m_topNav->setAlwaysOnTopChecked(AppSettings::alwaysOnTop());
+    applyAlwaysOnTop(AppSettings::alwaysOnTop());
     showDashboard();
+}
+
+void MainWindow::applyAlwaysOnTop(bool on)
+{
+    Qt::WindowFlags flags = windowFlags();
+    if (on) {
+        flags |= Qt::WindowStaysOnTopHint;
+    } else {
+        flags &= ~Qt::WindowStaysOnTopHint;
+    }
+    if (flags == windowFlags()) {
+        return;
+    }
+    setWindowFlags(flags);
+    show();
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)
@@ -881,6 +901,7 @@ void MainWindow::applyTheme()
         "  color: {{text}};"
         "}"
         "QToolButton#navIconBtn { padding: 3px; border: none; background: transparent; }"
+        "QToolButton#navIconBtn:checked { background-color: {{buttonHover}}; border: 1px solid {{borderStrong}}; }"
         "QPushButton#dashPrimary {"
         "  background-color: {{primaryBg}};"
         "  border-color: {{borderStrong}};"

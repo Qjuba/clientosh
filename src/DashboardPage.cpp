@@ -2282,6 +2282,7 @@ void DashboardPage::removeProfileFromTag(const QString& profileId)
 void DashboardPage::showPageContextMenu(const QPoint& globalPos)
 {
     QMenu menu(this);
+    menu.setObjectName(QStringLiteral("dashContextMenu"));
     auto* addTag = menu.addAction(QStringLiteral("Add Tag"));
     connect(addTag, &QAction::triggered, this, [this]() { addTagDialog(); });
     menu.exec(globalPos);
@@ -2290,6 +2291,7 @@ void DashboardPage::showPageContextMenu(const QPoint& globalPos)
 void DashboardPage::showTagContextMenu(const QPoint& globalPos, const QString& tagName)
 {
     QMenu menu(this);
+    menu.setObjectName(QStringLiteral("dashContextMenu"));
     auto* addHost = menu.addAction(QStringLiteral("Add Host to Tag"));
     connect(addHost, &QAction::triggered, this, [this, tagName]() {
         // Let the user pick an existing host to add to this tag.
@@ -2337,6 +2339,7 @@ void DashboardPage::showHostContextMenu(const QPoint& globalPos, const QString& 
     const SessionProfile& p = m_profiles[row];
 
     QMenu menu(this);
+    menu.setObjectName(QStringLiteral("dashContextMenu"));
 
     // Move → submenu of tags (plus Untagged).
     auto* moveMenu = menu.addMenu(QStringLiteral("Move"));

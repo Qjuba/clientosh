@@ -893,6 +893,7 @@ void SftpWindow::showContextMenu(const QPoint& globalPos)
     const bool isDir = item->data(Qt::UserRole).toBool();
 
     auto* menu = new QMenu(this);
+    menu->setObjectName(QStringLiteral("sftpContextMenu"));
     if (!isParent) {
         if (isDir) {
             auto* open = menu->addAction(QStringLiteral("Open"));

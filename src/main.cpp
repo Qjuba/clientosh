@@ -9,6 +9,7 @@
 #include <QApplication>
 #include <QCommandLineParser>
 #include <QIcon>
+#include <QStyleFactory>
 
 #ifdef Q_OS_WIN
 #include <winsock2.h>
@@ -22,6 +23,8 @@ int main(int argc, char* argv[])
 #endif
 
     ssh_init();
+
+    QApplication::setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
 
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("clientosh"));

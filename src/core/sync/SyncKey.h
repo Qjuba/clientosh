@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QMetaType>
 #include <QString>
 
 /**
@@ -44,3 +45,5 @@ QString encode(const SyncKey& key);
 SyncKey decode(const QString& text);
 
 } // namespace SyncKeyCodec
+
+Q_DECLARE_METATYPE(SyncKey)

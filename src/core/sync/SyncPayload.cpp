@@ -25,6 +25,7 @@ QJsonObject profileToJsonFull(const SessionProfile& p)
     const QString mode = p.isSftpOnly() ? QStringLiteral("sftp")
                                         : QStringLiteral("ssh");
     o.insert(QStringLiteral("connectionMode"), mode);
+    o.insert(QStringLiteral("system"), p.system);
     return o;
 }
 
@@ -46,6 +47,7 @@ SessionProfile profileFromJsonFull(const QJsonObject& o)
     p.connectionMode = mode.compare(QLatin1String("sftp"), Qt::CaseInsensitive) == 0
         ? ConnectionMode::SftpOnly
         : ConnectionMode::Ssh;
+    p.system = o.value(QStringLiteral("system")).toString();
     if (p.id.isEmpty()) {
         p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     }
@@ -115,7 +117,8 @@ SyncPayload fromJson(const QByteArray& bytes, bool* okOut)
     }
     const QJsonObject root = doc.object();
     payload.format = root.value(QStringLiteral("format")).toInt(1);
-    payload.rev = root.value(QStringLiteral("rev")).toInt(0);
+    payload.rev = static_cast<int>(root.value(QStringLiteral("rev")).toInteger(
+        root.value(QStringLiteral("rev")).toInt(0)));
     {
         const QJsonValue tsVal = root.value(QStringLiteral("ts"));
         // ts fits in 53-bit JS integer; toDouble then cast is lossless at ms granularity.

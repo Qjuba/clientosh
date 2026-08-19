@@ -7,10 +7,78 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSslError>
+#include <QStringList>
 #include <QUrl>
 
 namespace {
 const char* kGistApiBase = "https://api.github.com/gists";
+
+QString githubErrorMessage(int status, const QByteArray& resp, const QString& networkError)
+{
+    QString githubMsg;
+    const QJsonDocument doc = QJsonDocument::fromJson(resp);
+    if (doc.isObject()) {
+        githubMsg = doc.object().value(QStringLiteral("message")).toString().trimmed();
+    }
+    if (!githubMsg.isEmpty() && status > 0) {
+        return QStringLiteral("%1 (HTTP %2)").arg(githubMsg).arg(status);
+    }
+    if (!githubMsg.isEmpty()) {
+        return githubMsg;
+    }
+    if (status > 0 && !networkError.isEmpty()) {
+        return QStringLiteral("%1 (HTTP %2)").arg(networkError).arg(status);
+    }
+    if (!networkError.isEmpty()) {
+        return networkError;
+    }
+    if (status > 0) {
+        return QStringLiteral("GitHub request failed (HTTP %1)").arg(status);
+    }
+    return QStringLiteral("GitHub request failed");
+}
+
+QByteArray bearerHeader(const QString& token)
+{
+    return QByteArray("Bearer ") + token.trimmed().toUtf8();
+}
+
+QByteArray fetchGistFileContent(const QJsonObject& file, const QString& token,
+                                QString* errorOut)
+{
+    const bool truncated = file.value(QStringLiteral("truncated")).toBool(false);
+    const QString rawUrl = file.value(QStringLiteral("raw_url")).toString();
+    if (truncated && !rawUrl.isEmpty()) {
+        QNetworkAccessManager nam;
+        QNetworkRequest req{QUrl(rawUrl)};
+        req.setHeader(QNetworkRequest::UserAgentHeader,
+                      QStringLiteral("clientosh-sync/1.0"));
+        req.setRawHeader("Accept", "application/vnd.github.raw");
+        req.setRawHeader("Authorization", bearerHeader(token));
+        req.setTransferTimeout(30000);
+        QNetworkReply* reply = nam.get(req);
+        if (!reply->isFinished()) {
+            QEventLoop loop;
+            QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+            loop.exec();
+        }
+        const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        const QByteArray resp = reply->readAll();
+        const bool ok = (reply->error() == QNetworkReply::NoError
+                         && status >= 200 && status < 300);
+        if (!ok) {
+            if (errorOut) {
+                *errorOut = githubErrorMessage(status, resp, reply->errorString());
+            }
+            delete reply;
+            return {};
+        }
+        delete reply;
+        return resp;
+    }
+    return file.value(QStringLiteral("content")).toString().toUtf8();
+}
 } // namespace
 
 bool SyncGitHub::perform(const QByteArray& method, const QString& url,
@@ -25,8 +93,10 @@ bool SyncGitHub::perform(const QByteArray& method, const QString& url,
                   QStringLiteral("clientosh-sync/1.0"));
     req.setRawHeader("Accept", "application/vnd.github+json");
     req.setRawHeader("X-GitHub-Api-Version", "2022-11-28");
-    req.setRawHeader("Authorization",
-                     QByteArray("Bearer ") + token.toUtf8());
+    req.setRawHeader("Authorization", bearerHeader(token));
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                     QNetworkRequest::NoLessSafeRedirectPolicy);
+    req.setTransferTimeout(30000);
 
     QNetworkReply* reply = nullptr;
     if (method == "POST") {
@@ -39,10 +109,23 @@ bool SyncGitHub::perform(const QByteArray& method, const QString& url,
         reply = nam.get(req);
     }
 
-    // Block in a worker thread until the reply arrives. (Never call from GUI.)
-    QEventLoop loop;
-    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
-    loop.exec();
+    QString sslError;
+    QObject::connect(reply, &QNetworkReply::sslErrors, reply,
+                     [&sslError](const QList<QSslError>& errors) {
+                         QStringList parts;
+                         for (const QSslError& e : errors) {
+                             parts.append(e.errorString());
+                         }
+                         sslError = parts.join(QStringLiteral("; "));
+                     });
+
+    // If the reply already finished (cached / instant failure), skip the wait
+    // so we cannot miss the finished signal and hang the worker thread.
+    if (!reply->isFinished()) {
+        QEventLoop loop;
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        loop.exec();
+    }
 
     const int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
     const QByteArray resp = reply->readAll();
@@ -57,10 +140,13 @@ bool SyncGitHub::perform(const QByteArray& method, const QString& url,
     }
 
     if (!ok) {
-        const QString reason = reply->errorString();
+        QString reason = sslError;
+        if (reason.isEmpty()) {
+            reason = githubErrorMessage(status, resp, reply->errorString());
+        }
         errorOut = reason.toUtf8();
     }
-    reply->deleteLater();
+    delete reply;
     return ok;
 }
 
@@ -103,10 +189,13 @@ SyncGitHub::CreateResult SyncGitHub::createGist(const QString& token,
 
 bool SyncGitHub::checkToken(const QString& token, QString* errorOut)
 {
+    // Probe gist access, not GET /user — fine-grained PATs with only the gist
+    // permission are rejected by /user even when they can read/write gists.
     int status = 0;
     QByteArray resp;
     QByteArray error;
-    const bool ok = perform("GET", QLatin1String("https://api.github.com/user"),
+    const bool ok = perform("GET",
+                            QLatin1String("https://api.github.com/gists?per_page=1"),
                             token, QByteArray(), &status, &resp, error);
     if (!ok && errorOut) {
         *errorOut = QString::fromUtf8(error);
@@ -163,19 +252,30 @@ SyncGitHub::ReadResult SyncGitHub::readGist(const QString& token,
 
     const QJsonDocument doc = QJsonDocument::fromJson(resp);
     const QJsonObject files = doc.object().value(QStringLiteral("files")).toObject();
-    const QJsonObject file = files.value(filename).toObject();
-    if (!file.isEmpty()) {
-        result.body = file.value(QStringLiteral("content")).toString().toUtf8();
+
+    auto takeFile = [&](const QJsonObject& file) -> bool {
+        QString fetchError;
+        const QByteArray body = fetchGistFileContent(file, token, &fetchError);
+        if (body.isEmpty() && !fetchError.isEmpty()) {
+            result.error = fetchError;
+            return false;
+        }
+        result.body = QString::fromUtf8(body);
         result.ok = true;
+        return true;
+    };
+
+    const QJsonObject named = files.value(filename).toObject();
+    if (!named.isEmpty()) {
+        takeFile(named);
         return result;
     }
 
-    // Fallback: accept the whole first file (gist rename resilience).
+    // Fallback: accept the first file (gist rename resilience).
     for (const QJsonValue& v : files) {
         const QJsonObject f = v.toObject();
-        if (f.contains(QStringLiteral("content"))) {
-            result.body = f.value(QStringLiteral("content")).toString().toUtf8();
-            result.ok = true;
+        if (f.contains(QStringLiteral("content")) || f.contains(QStringLiteral("raw_url"))) {
+            takeFile(f);
             return result;
         }
     }

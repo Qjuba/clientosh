@@ -62,15 +62,28 @@ public:
     void createSync(const QString& token, const QString& gistDescription);
     /** Join an existing sync on Computer 2 from a copied key + local token. */
     void joinSync(const QString& syncKeyText, const QString& token);
+    /**
+     * Reconnect to a previously configured sync on this machine, restoring the
+     * last known revision so an empty/stale gist cannot wipe local data.
+     */
+    void restoreExisting(const QString& syncKeyText, const QString& token);
     /** Test whether a GitHub token is valid (async). err slot reports result. */
     void testToken(const QString& token);
     /** Turn sync off. Keeps local data untouched; stops polling and worker. */
     void disable();
+    /**
+     * Pause or resume automatic polling/push without forgetting the sync key.
+     * `pause(true)` stops the timer; `pause(false)` resumes it when Active.
+     */
+    void setPaused(bool paused);
+    bool isPaused() const { return m_paused; }
 
     /** Immediately check the remote gist and pull newer data (async). */
     void pullNow();
     /** Immediately push the current local data as a new revision (async). */
     void pushNow();
+    /** Pull remote changes, then push the current local snapshot (async). */
+    void syncNow();
 
     /** Configure how often (seconds) the controller polls for remote changes. */
     void setPollIntervalSec(int seconds);
@@ -104,9 +117,12 @@ private:
     void startWorker();
     void stopWorker();
     void push();
-    void reconcileFromRemote(const SyncPayload& remote);
+    void beginJoin(const QString& syncKeyText, const QString& token, bool restoring);
+    void reconcileFromRemote(const SyncPayload& remote, bool joining);
+    SyncPayload currentLocalPayload() const;
     QByteArray serializeWithFraming();
     void startPollTimer();
+    void flushQueuedPush();
 
     QThread* m_thread = nullptr;
     SyncWorker* m_worker = nullptr;
@@ -129,6 +145,9 @@ private:
     int m_pollIntervalSec = 60;
     int m_lastKnownRev = 0;
     bool m_connectedOnce = false;
+    bool m_paused = false;
+    bool m_pushQueued = false;     // local change arrived while another op ran
+    bool m_syncNowQueued = false;  // Sync now: pull, then push
 };
 
 Q_DECLARE_METATYPE(SyncController::State)

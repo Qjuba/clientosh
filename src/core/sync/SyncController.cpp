@@ -5,7 +5,11 @@
 #include "SyncKey.h"
 #include "SyncPayload.h"
 
+#include "CryptoEngine.h"
+
 #include <QDateTime>
+#include <QHash>
+#include <QMetaType>
 #include <QThread>
 #include <QTimer>
 
@@ -19,11 +23,53 @@ inline QString b64url(const QByteArray& data)
     return QString::fromLatin1(data.toBase64(QByteArray::Base64UrlEncoding
                                              | QByteArray::OmitTrailingEquals));
 }
+
+SyncPayload mergeSnapshots(const SyncPayload& local, const SyncPayload& remote)
+{
+    SyncPayload out = remote;
+
+    QHash<QString, SessionProfile> profiles;
+    for (const SessionProfile& p : remote.profiles) {
+        if (!p.id.isEmpty()) {
+            profiles.insert(p.id, p);
+        }
+    }
+    for (const SessionProfile& p : local.profiles) {
+        if (!p.id.isEmpty() && !profiles.contains(p.id)) {
+            profiles.insert(p.id, p);
+        }
+    }
+    out.profiles.clear();
+    out.profiles.reserve(profiles.size());
+    for (auto it = profiles.cbegin(); it != profiles.cend(); ++it) {
+        out.profiles.append(it.value());
+    }
+
+    QHash<QString, StoredKey> keys;
+    for (const StoredKey& k : remote.keys) {
+        if (!k.id.isEmpty()) {
+            keys.insert(k.id, k);
+        }
+    }
+    for (const StoredKey& k : local.keys) {
+        if (!k.id.isEmpty() && !keys.contains(k.id)) {
+            keys.insert(k.id, k);
+        }
+    }
+    out.keys.clear();
+    out.keys.reserve(keys.size());
+    for (auto it = keys.cbegin(); it != keys.cend(); ++it) {
+        out.keys.append(it.value());
+    }
+    return out;
+}
 } // namespace
 
 SyncController::SyncController(QObject* parent)
     : QObject(parent)
 {
+    qRegisterMetaType<SyncKey>("SyncKey");
+
     m_pollTimer = new QTimer(this);
     m_pollTimer->setTimerType(Qt::VeryCoarseTimer);
     m_pollTimer->setSingleShot(false);
@@ -69,7 +115,7 @@ bool SyncController::hasToken() const
 void SyncController::setPollIntervalSec(int seconds)
 {
     m_pollIntervalSec = std::max(10, seconds);
-    if (m_state == State::Active) {
+    if (m_state == State::Active && !m_paused) {
         startPollTimer();
     }
 }
@@ -77,6 +123,9 @@ void SyncController::setPollIntervalSec(int seconds)
 void SyncController::startPollTimer()
 {
     m_pollTimer->stop();
+    if (m_paused) {
+        return;
+    }
     m_pollTimer->start(m_pollIntervalSec * 1000);
 }
 
@@ -104,17 +153,16 @@ void SyncController::startWorker()
 
 void SyncController::stopWorker()
 {
-    if (m_thread) {
-        m_thread->quit();
-        m_thread->wait(3000);
-        if (m_worker) {
-            m_worker->deleteLater();
-            m_worker = nullptr;
-        }
-        m_thread->wait(500);
-        delete m_thread;
-        m_thread = nullptr;
+    if (!m_thread) {
+        m_pending = PendingOp::None;
+        return;
     }
+    m_thread->quit();
+    m_thread->wait(35000);
+    delete m_worker;
+    m_worker = nullptr;
+    delete m_thread;
+    m_thread = nullptr;
     m_pending = PendingOp::None;
 }
 
@@ -122,16 +170,22 @@ void SyncController::stopWorker()
 
 void SyncController::createSync(const QString& token, const QString& gistDescription)
 {
-    if (token.trimmed().isEmpty()) {
+    const QString trimmed = token.trimmed();
+    if (trimmed.isEmpty()) {
         emit errorOccurred(QStringLiteral("A GitHub token is required to create a sync."));
         return;
     }
-    startWorker();
     if (m_state == State::Connecting) {
         return;
     }
+    if (m_pending != PendingOp::None) {
+        emit errorOccurred(QStringLiteral("Wait for the current GitHub request to finish, then try again."));
+        return;
+    }
+    startWorker();
     setState(State::Connecting);
-    m_token = token;
+    m_paused = false;
+    m_token = trimmed;
     m_tokenLocal = true;
     m_gistDesc = gistDescription.trimmed().isEmpty()
         ? QStringLiteral("clientosh saved-sessions sync")
@@ -139,13 +193,20 @@ void SyncController::createSync(const QString& token, const QString& gistDescrip
 
     // First-time setup on Computer 1: generate all local crypto keys + identity.
     m_key = SyncCrypto::generateSyncKey();
-    m_key.token = token.toUtf8(); // embed the token so the key fully joins the sync
+    m_key.token = trimmed.toUtf8();
     m_filename = QStringLiteral("clientosh-sync-%1.json").arg(b64url(m_key.syncUuid));
 
-    // Encrypt the current local data as the initial revision.
     m_lastKnownRev = 0;
     SyncConfig::setLastKnownRev(0);
-    const QByteArray encrypted = SyncCrypto::encryptPayload(m_key, serializeWithFraming()).toBase64();
+
+    QByteArray encrypted;
+    try {
+        encrypted = SyncCrypto::encryptPayload(m_key, serializeWithFraming()).toBase64();
+    } catch (const CryptoEngine::CryptoError& e) {
+        setState(State::Disabled);
+        emit errorOccurred(QStringLiteral("Could not encrypt the sync payload: %1").arg(e.message));
+        return;
+    }
 
     m_pending = PendingOp::Create;
     emit requestCreate(m_key, m_token, m_gistDesc, m_filename, encrypted);
@@ -153,45 +214,63 @@ void SyncController::createSync(const QString& token, const QString& gistDescrip
 
 void SyncController::joinSync(const QString& syncKeyText, const QString& token)
 {
+    beginJoin(syncKeyText, token, false);
+}
+
+void SyncController::restoreExisting(const QString& syncKeyText, const QString& token)
+{
+    beginJoin(syncKeyText, token, true);
+}
+
+void SyncController::beginJoin(const QString& syncKeyText, const QString& token, bool restoring)
+{
     const SyncKey parsed = SyncKeyCodec::decode(syncKeyText);
     if (!parsed.isValid()) {
         emit errorOccurred(QStringLiteral("That sync key is malformed. Please copy the exact key and try again."));
         return;
     }
-    // The token may come embedded in the key (preferred) or be passed explicitly.
-    QString effectiveToken = token;
-    if (effectiveToken.trimmed().isEmpty() && !parsed.token.isEmpty()) {
-        effectiveToken = QString::fromUtf8(parsed.token);
+    QString effectiveToken = token.trimmed();
+    if (effectiveToken.isEmpty() && !parsed.token.isEmpty()) {
+        effectiveToken = QString::fromUtf8(parsed.token).trimmed();
     }
-    if (effectiveToken.trimmed().isEmpty()) {
+    if (effectiveToken.isEmpty()) {
         emit errorOccurred(QStringLiteral("A GitHub token is required to read the synchronized gist."));
         return;
     }
-    startWorker();
     if (m_state == State::Connecting) {
         return;
     }
+    if (m_pending != PendingOp::None) {
+        emit errorOccurred(QStringLiteral("Wait for the current GitHub request to finish, then try again."));
+        return;
+    }
+    startWorker();
     setState(State::Connecting);
+    m_paused = false;
     m_key = parsed;
-    m_key.token = effectiveToken.toUtf8(); // retain token for future sync key persistence
+    m_key.token = effectiveToken.toUtf8();
     m_token = effectiveToken;
     m_tokenLocal = true;
     m_gistDesc.clear();
     m_filename = QStringLiteral("clientosh-sync-%1.json").arg(b64url(m_key.syncUuid));
-
-    m_pending = PendingOp::Join;
+    m_lastKnownRev = restoring ? std::max(0, SyncConfig::lastKnownRev()) : 0;
+    if (restoring) {
+        m_pending = PendingOp::Pull;
+    } else {
+        m_pending = PendingOp::Join;
+    }
     emit requestPull(m_key, m_token, m_filename);
 }
 
 void SyncController::testToken(const QString& token)
 {
-    if (token.trimmed().isEmpty()) {
+    const QString trimmed = token.trimmed();
+    if (trimmed.isEmpty()) {
         emit errorOccurred(QStringLiteral("Enter a GitHub token to test."));
         return;
     }
     startWorker();
-    m_pending = PendingOp::Test;
-    emit requestTestToken(token);
+    emit requestTestToken(trimmed);
 }
 
 void SyncController::disable()
@@ -204,18 +283,35 @@ void SyncController::disable()
     m_gistDesc.clear();
     m_filename.clear();
     m_lastKnownRev = 0;
+    m_paused = false;
+    m_pushQueued = false;
+    m_syncNowQueued = false;
     m_pending = PendingOp::None;
     stopWorker();
     emit statusMessage(QStringLiteral("Synchronization disabled. Local data is unchanged."));
 }
 
+void SyncController::setPaused(bool paused)
+{
+    m_paused = paused;
+    if (paused) {
+        m_pollTimer->stop();
+        emit statusMessage(QStringLiteral("Sync paused on this machine. Local data is unchanged."));
+        return;
+    }
+    if (m_state == State::Active) {
+        startPollTimer();
+        emit statusMessage(QStringLiteral("Sync resumed."));
+    }
+}
+
 void SyncController::pullNow()
 {
-    if (m_state == State::Disabled || m_key.gistId.isEmpty() || !m_tokenLocal) {
+    if (m_state == State::Disabled || m_key.gistId.isEmpty() || !m_tokenLocal || m_paused) {
         return;
     }
     if (m_pending != PendingOp::None) {
-        return; // a sync op is already in flight
+        return;
     }
     startWorker();
     m_pending = PendingOp::Pull;
@@ -224,26 +320,62 @@ void SyncController::pullNow()
 
 void SyncController::pushNow()
 {
-    if (m_state == State::Disabled || m_key.gistId.isEmpty() || !m_tokenLocal) {
+    if (m_state == State::Disabled || m_key.gistId.isEmpty() || !m_tokenLocal || m_paused) {
         return;
     }
     push();
 }
 
-void SyncController::push()
+void SyncController::syncNow()
 {
+    if (m_state == State::Disabled || m_key.gistId.isEmpty() || !m_tokenLocal || m_paused) {
+        return;
+    }
+    m_syncNowQueued = true;
     if (m_pending != PendingOp::None) {
         return;
     }
+    pullNow();
+}
+
+void SyncController::push()
+{
+    if (m_state == State::Disabled || m_key.gistId.isEmpty() || !m_tokenLocal || m_paused) {
+        return;
+    }
+    if (m_pending != PendingOp::None) {
+        m_pushQueued = true;
+        return;
+    }
     startWorker();
-    const QByteArray encrypted = SyncCrypto::encryptPayload(m_key, serializeWithFraming()).toBase64();
+    QByteArray encrypted;
+    try {
+        encrypted = SyncCrypto::encryptPayload(m_key, serializeWithFraming()).toBase64();
+    } catch (const CryptoEngine::CryptoError& e) {
+        emit errorOccurred(QStringLiteral("Could not encrypt the sync payload: %1").arg(e.message));
+        return;
+    }
     m_pending = PendingOp::Push;
     emit requestPush(m_key, m_token, m_filename, encrypted);
 }
 
+void SyncController::flushQueuedPush()
+{
+    if (m_syncNowQueued) {
+        m_syncNowQueued = false;
+        m_pushQueued = false;
+        push();
+        return;
+    }
+    if (m_pushQueued) {
+        m_pushQueued = false;
+        push();
+    }
+}
+
 void SyncController::onPollTick()
 {
-    if (m_state == State::Disabled) {
+    if (m_state == State::Disabled || m_paused) {
         return;
     }
     pullNow();
@@ -280,59 +412,87 @@ void SyncController::onPushFinished(bool ok, const QString& error)
     m_pending = PendingOp::None;
     if (!ok) {
         emit errorOccurred(QStringLiteral("Upload failed: %1").arg(error));
+        flushQueuedPush();
         return;
     }
-    // The payload that was pushed carried rev == old+1; adopt it as known-good.
     ++m_lastKnownRev;
     SyncConfig::setLastKnownRev(m_lastKnownRev);
     emit statusMessage(QStringLiteral("Changes uploaded."));
+    flushQueuedPush();
 }
 
 void SyncController::onPullFinished(bool ok, bool notFound, const QString& body,
                                     const QString& error)
 {
     const PendingOp op = m_pending;
+    if (op != PendingOp::Pull && op != PendingOp::Join) {
+        return;
+    }
+    Q_UNUSED(notFound);
     m_pending = PendingOp::None;
 
     if (!ok) {
-        if (op == PendingOp::Join) {
+        if (op == PendingOp::Join || m_state == State::Connecting) {
             setState(State::Disabled);
-            emit errorOccurred(QStringLiteral("Could not join the sync: %1").arg(error));
+            emit errorOccurred(op == PendingOp::Join
+                                   ? QStringLiteral("Could not join the sync: %1").arg(error)
+                                   : QStringLiteral("Could not reconnect to sync: %1").arg(error));
         } else {
             emit errorOccurred(QStringLiteral("Sync check failed: %1").arg(error));
         }
+        m_syncNowQueued = false;
         return;
     }
 
-    // Decrypt the remote payload (gist content is base64-encoded ciphertext).
     SyncPayload remote;
     try {
         const QByteArray cipher = QByteArray::fromBase64(body.toLatin1());
-        const QByteArray plain = SyncCrypto::decryptPayload(m_key, cipher);
-        bool parsedOk = false;
-        remote = SyncPayloadCodec::fromJson(plain, &parsedOk);
-        if (!parsedOk) {
-            throw std::runtime_error("payload parse");
+        if (cipher.isEmpty() && !body.trimmed().isEmpty()) {
+            throw std::runtime_error("base64");
+        }
+        if (cipher.isEmpty()) {
+            remote = SyncPayload{};
+        } else {
+            const QByteArray plain = SyncCrypto::decryptPayload(m_key, cipher);
+            bool parsedOk = false;
+            remote = SyncPayloadCodec::fromJson(plain, &parsedOk);
+            if (!parsedOk) {
+                throw std::runtime_error("payload parse");
+            }
         }
     } catch (...) {
+        if (op == PendingOp::Join || m_state == State::Connecting) {
+            setState(State::Disabled);
+        }
         emit errorOccurred(QStringLiteral("Received data could not be decrypted. The sync key may be wrong."));
+        m_syncNowQueued = false;
         return;
     }
 
-    reconcileFromRemote(remote);
+    const bool joining = (op == PendingOp::Join);
+    reconcileFromRemote(remote, joining);
 
-    if (op == PendingOp::Join) {
+    if (joining) {
+        SyncConfig::setSyncKeyText(SyncKeyCodec::encode(m_key));
         setState(State::Active);
         startPollTimer();
         emit statusMessage(QStringLiteral("Connected to an existing sync."));
-    } else {
-        emit statusMessage(QStringLiteral("Synchronized."));
+        const SyncPayload local = currentLocalPayload();
+        if (!local.profiles.isEmpty() || !local.keys.isEmpty()) {
+            m_pushQueued = true;
+        }
+    } else if (m_state == State::Connecting) {
+        SyncConfig::setSyncKeyText(SyncKeyCodec::encode(m_key));
+        setState(State::Active);
+        startPollTimer();
+        emit statusMessage(QStringLiteral("Reconnected to sync."));
     }
+
+    flushQueuedPush();
 }
 
 void SyncController::onTestFinished(bool ok, const QString& error)
 {
-    m_pending = PendingOp::None;
     if (ok) {
         emit statusMessage(QStringLiteral("GitHub token is valid."));
     } else {
@@ -342,21 +502,50 @@ void SyncController::onTestFinished(bool ok, const QString& error)
 
 // ---- Reconciliation ----------------------------------------------------
 
-void SyncController::reconcileFromRemote(const SyncPayload& remote)
+SyncPayload SyncController::currentLocalPayload() const
 {
-    // Empty gist (pre-create placeholder / truncated): never wipe local data.
-    if (remote.deviceId.isEmpty() && remote.rev == 0 && remote.timestampMs == 0
-        && remote.profiles.isEmpty()) {
-        if (m_lastKnownRev == 0) {
-            // Local has the data — push it as the real rev 1 instead of adopting emptiness.
-            // Do not emit here; the debounced local push will do it.
+    if (!m_serialize) {
+        return {};
+    }
+    bool ok = false;
+    return SyncPayloadCodec::fromJson(m_serialize(), &ok);
+}
+
+void SyncController::reconcileFromRemote(const SyncPayload& remote, bool joining)
+{
+    const bool remoteEmpty = remote.profiles.isEmpty() && remote.keys.isEmpty()
+        && (remote.deviceId.isEmpty() || remote.rev <= 1);
+    const SyncPayload local = currentLocalPayload();
+    const bool localHasData = !local.profiles.isEmpty() || !local.keys.isEmpty();
+
+    // Never adopt an empty/placeholder gist over existing local sessions.
+    if (remoteEmpty && localHasData) {
+        if (joining || m_lastKnownRev == 0 || remote.rev <= m_lastKnownRev) {
+            m_pushQueued = true;
+            return;
         }
+        // A strictly newer empty revision is a real "delete everything" from
+        // another device — fall through and apply it.
+    }
+
+    if (joining && localHasData && (!remote.profiles.isEmpty() || !remote.keys.isEmpty())) {
+        SyncPayload merged = mergeSnapshots(local, remote);
+        merged.rev = std::max(remote.rev, m_lastKnownRev);
+        merged.timestampMs = std::max(remote.timestampMs, local.timestampMs);
+        bool applied = false;
+        if (m_apply) {
+            applied = m_apply(SyncPayloadCodec::toJson(merged));
+        }
+        m_lastKnownRev = std::max(m_lastKnownRev, merged.rev);
+        SyncConfig::setLastKnownRev(m_lastKnownRev);
+        if (applied) {
+            emit dataUpdated();
+            emit statusMessage(QStringLiteral("Merged local and remote sessions."));
+        }
+        m_pushQueued = true;
         return;
     }
 
-    // Version rule: a strictly newer revision wins. Equal rev with empty history
-    // must not be treated as newer — otherwise a fresh/empty gist would overwrite
-    // the local store.
     const bool remoteNewer = remote.rev > m_lastKnownRev;
     if (!remoteNewer) {
         return;

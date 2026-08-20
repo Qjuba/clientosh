@@ -41,6 +41,9 @@ void setPollIntervalSec(int seconds);
 int lastKnownRev();
 void setLastKnownRev(int rev);
 
+/** Stable per-install device id used in sync payload framing. */
+QString deviceId();
+
 // ---- Token (OS keyring only) -------------------------------------------
 /** Persist the GitHub token for `uuidHex` in the OS keyring. */
 void storeToken(const QString& uuidHex, const QString& token);

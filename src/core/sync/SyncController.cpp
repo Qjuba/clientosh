@@ -10,8 +10,10 @@
 #include <QDateTime>
 #include <QHash>
 #include <QMetaType>
+#include <QSet>
 #include <QThread>
 #include <QTimer>
+#include <QUuid>
 
 #include <algorithm>
 #include <functional>
@@ -24,44 +26,153 @@ inline QString b64url(const QByteArray& data)
                                              | QByteArray::OmitTrailingEquals));
 }
 
+/** Same connection target → treat as one host even when UUIDs differ. */
+QString profileContentKey(const SessionProfile& p)
+{
+    const QString host = p.host.trimmed().toLower();
+    const QString user = p.user.trimmed().toLower();
+    if (host.isEmpty() && user.isEmpty()) {
+        return {};
+    }
+    return host + QLatin1Char('\n') + QString::number(p.port) + QLatin1Char('\n') + user;
+}
+
+QString keyContentKey(const StoredKey& k)
+{
+    const QString name = k.name.trimmed().toLower();
+    if (name.isEmpty() && k.pem.isEmpty()) {
+        return {};
+    }
+    return name + QLatin1Char('\n') + QString::fromLatin1(k.pem.left(64).toHex());
+}
+
+/**
+ * Collapse duplicate hosts/keys that share an id or the same connection target.
+ * Prefer entries that appear earlier in `preferred` order (remote first).
+ */
+SyncPayload dedupePayload(const SyncPayload& in)
+{
+    SyncPayload out = in;
+
+    QHash<QString, SessionProfile> byId;
+    QHash<QString, QString> contentToId;
+    QVector<SessionProfile> profiles;
+    profiles.reserve(in.profiles.size());
+
+    for (SessionProfile p : in.profiles) {
+        if (p.id.isEmpty()) {
+            p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        }
+        if (byId.contains(p.id)) {
+            continue;
+        }
+        const QString ck = profileContentKey(p);
+        if (!ck.isEmpty() && contentToId.contains(ck)) {
+            // Same host/user/port under a different UUID — keep the first one.
+            continue;
+        }
+        byId.insert(p.id, p);
+        if (!ck.isEmpty()) {
+            contentToId.insert(ck, p.id);
+        }
+        profiles.append(p);
+    }
+    out.profiles = profiles;
+
+    QHash<QString, StoredKey> keysById;
+    QHash<QString, QString> keyContentToId;
+    QVector<StoredKey> keys;
+    keys.reserve(in.keys.size());
+    for (StoredKey k : in.keys) {
+        if (k.id.isEmpty()) {
+            k.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        }
+        if (keysById.contains(k.id)) {
+            continue;
+        }
+        const QString ck = keyContentKey(k);
+        if (!ck.isEmpty() && keyContentToId.contains(ck)) {
+            continue;
+        }
+        keysById.insert(k.id, k);
+        if (!ck.isEmpty()) {
+            keyContentToId.insert(ck, k.id);
+        }
+        keys.append(k);
+    }
+    out.keys = keys;
+    return out;
+}
+
+bool payloadShrunk(const SyncPayload& before, const SyncPayload& after)
+{
+    return after.profiles.size() < before.profiles.size()
+        || after.keys.size() < before.keys.size();
+}
+
 SyncPayload mergeSnapshots(const SyncPayload& local, const SyncPayload& remote)
 {
-    SyncPayload out = remote;
-
-    QHash<QString, SessionProfile> profiles;
+    // Remote wins on id conflicts; local-only entries are kept only when they
+    // are not the same connection (host/port/user) as something already remote.
+    // That stops "same host, new UUID" duplicates after join / re-seed.
+    SyncPayload combined = remote;
+    QSet<QString> seenIds;
+    QSet<QString> seenContent;
     for (const SessionProfile& p : remote.profiles) {
         if (!p.id.isEmpty()) {
-            profiles.insert(p.id, p);
+            seenIds.insert(p.id);
+        }
+        const QString ck = profileContentKey(p);
+        if (!ck.isEmpty()) {
+            seenContent.insert(ck);
         }
     }
     for (const SessionProfile& p : local.profiles) {
-        if (!p.id.isEmpty() && !profiles.contains(p.id)) {
-            profiles.insert(p.id, p);
+        if (!p.id.isEmpty() && seenIds.contains(p.id)) {
+            continue;
+        }
+        const QString ck = profileContentKey(p);
+        if (!ck.isEmpty() && seenContent.contains(ck)) {
+            continue;
+        }
+        combined.profiles.append(p);
+        if (!p.id.isEmpty()) {
+            seenIds.insert(p.id);
+        }
+        if (!ck.isEmpty()) {
+            seenContent.insert(ck);
         }
     }
-    out.profiles.clear();
-    out.profiles.reserve(profiles.size());
-    for (auto it = profiles.cbegin(); it != profiles.cend(); ++it) {
-        out.profiles.append(it.value());
-    }
 
-    QHash<QString, StoredKey> keys;
+    QSet<QString> seenKeyIds;
+    QSet<QString> seenKeyContent;
     for (const StoredKey& k : remote.keys) {
         if (!k.id.isEmpty()) {
-            keys.insert(k.id, k);
+            seenKeyIds.insert(k.id);
+        }
+        const QString ck = keyContentKey(k);
+        if (!ck.isEmpty()) {
+            seenKeyContent.insert(ck);
         }
     }
     for (const StoredKey& k : local.keys) {
-        if (!k.id.isEmpty() && !keys.contains(k.id)) {
-            keys.insert(k.id, k);
+        if (!k.id.isEmpty() && seenKeyIds.contains(k.id)) {
+            continue;
+        }
+        const QString ck = keyContentKey(k);
+        if (!ck.isEmpty() && seenKeyContent.contains(ck)) {
+            continue;
+        }
+        combined.keys.append(k);
+        if (!k.id.isEmpty()) {
+            seenKeyIds.insert(k.id);
+        }
+        if (!ck.isEmpty()) {
+            seenKeyContent.insert(ck);
         }
     }
-    out.keys.clear();
-    out.keys.reserve(keys.size());
-    for (auto it = keys.cbegin(); it != keys.cend(); ++it) {
-        out.keys.append(it.value());
-    }
-    return out;
+
+    return dedupePayload(combined);
 }
 } // namespace
 
@@ -542,18 +653,44 @@ void SyncController::reconcileFromRemote(const SyncPayload& remote, bool joining
             emit dataUpdated();
             emit statusMessage(QStringLiteral("Merged local and remote sessions."));
         }
+        // Always push after join so the healed/deduped snapshot becomes canonical.
         m_pushQueued = true;
         return;
     }
 
     const bool remoteNewer = remote.rev > m_lastKnownRev;
     if (!remoteNewer) {
+        // Heal duplicates that may already live locally (or only on the gist)
+        // after an older buggy join — even when the revision did not advance.
+        const SyncPayload localClean = dedupePayload(local);
+        const SyncPayload remoteClean = dedupePayload(remote);
+        const bool localDirty = payloadShrunk(local, localClean);
+        const bool remoteDirty = payloadShrunk(remote, remoteClean);
+        if (localDirty) {
+            bool applied = false;
+            if (m_apply) {
+                SyncPayload healed = localClean;
+                healed.rev = std::max(remote.rev, m_lastKnownRev);
+                healed.timestampMs = std::max(remote.timestampMs, local.timestampMs);
+                applied = m_apply(SyncPayloadCodec::toJson(healed));
+            }
+            if (applied) {
+                emit dataUpdated();
+                emit statusMessage(QStringLiteral("Removed duplicate synced hosts."));
+            }
+            m_pushQueued = true;
+        } else if (remoteDirty) {
+            // Local is already clean; upload it so the gist stops reintroducing
+            // duplicates on the next pull from another machine.
+            m_pushQueued = true;
+        }
         return;
     }
 
+    SyncPayload toApply = dedupePayload(remote);
     bool applied = false;
     if (m_apply) {
-        applied = m_apply(SyncPayloadCodec::toJson(remote));
+        applied = m_apply(SyncPayloadCodec::toJson(toApply));
     }
     m_lastKnownRev = std::max(m_lastKnownRev, remote.rev);
     SyncConfig::setLastKnownRev(m_lastKnownRev);
@@ -561,6 +698,10 @@ void SyncController::reconcileFromRemote(const SyncPayload& remote, bool joining
     if (applied) {
         emit dataUpdated();
         emit statusMessage(QStringLiteral("Newer data downloaded from sync."));
+    }
+    // If the gist still carried host duplicates, push the cleaned snapshot back.
+    if (payloadShrunk(remote, toApply)) {
+        m_pushQueued = true;
     }
 }
 

@@ -156,9 +156,7 @@ inline SessionProfile profileFromJson(const QJsonObject& o)
     p.connectionMode = connectionModeFromString(
         o.value(QStringLiteral("connectionMode")).toString(QStringLiteral("ssh")));
     p.system = o.value(QStringLiteral("system")).toString();
-    if (p.id.isEmpty()) {
-        p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    }
+    // Leave empty ids empty here — loadProfiles() assigns and persists once.
     return p;
 }
 
@@ -219,10 +217,12 @@ inline QVector<SessionProfile> loadProfiles()
 
     QVector<SessionProfile> out;
     out.reserve(arr.size());
+    bool generatedIds = false;
     for (const QJsonValue& v : arr) {
         SessionProfile p = VaultPrivate::profileFromJson(v.toObject());
         if (p.id.isEmpty()) {
-            continue;
+            p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+            generatedIds = true;
         }
         // Pull sensitive material from the keyring-protected dbvault.
         QByteArray secret;
@@ -236,6 +236,12 @@ inline QVector<SessionProfile> loadProfiles()
             secret.fill('\0');
         }
         out.push_back(p);
+    }
+    // Persist any newly assigned ids so the next sync round-trip keeps a stable
+    // identity (otherwise every restart invents fresh UUIDs and join-merge
+    // creates duplicate hosts).
+    if (generatedIds) {
+        saveProfiles(out);
     }
     return out;
 }

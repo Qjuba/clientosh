@@ -5,6 +5,7 @@
 
 #include <QSettings>
 #include <QString>
+#include <QUuid>
 #include <QtGlobal>
 
 namespace {
@@ -14,6 +15,7 @@ const char* kSyncKey = "sync/syncKey";
 const char* kGistDesc = "sync/gistDescription";
 const char* kPollInterval = "sync/pollIntervalSec";
 const char* kLastRev = "sync/lastKnownRev";
+const char* kDeviceId = "sync/deviceId";
 
 inline QString tokenKeyName(const QString& uuidHex)
 {
@@ -87,6 +89,19 @@ void setLastKnownRev(int rev)
     QSettings s;
     s.setValue(QLatin1String(kLastRev), rev);
     s.sync();
+}
+
+QString deviceId()
+{
+    QSettings s;
+    QString id = s.value(QLatin1String(kDeviceId)).toString().trimmed();
+    if (id.isEmpty()) {
+        id = QStringLiteral("device-%1").arg(
+            QUuid::createUuid().toString(QUuid::WithoutBraces).left(10));
+        s.setValue(QLatin1String(kDeviceId), id);
+        s.sync();
+    }
+    return id;
 }
 
 void storeToken(const QString& uuidHex, const QString& token)

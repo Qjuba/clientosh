@@ -1168,8 +1168,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     // ---- Sync (background controller, never blocks UI) ---------------
     m_sync = new SyncController(this);
     {
-        const QString deviceId = QStringLiteral("device-%1").arg(
-            QUuid::createUuid().toString(QUuid::WithoutBraces).left(10));
+        const QString deviceId = SyncConfig::deviceId();
         const QString raw = QString::fromLatin1(qgetenv("COMPUTERNAME"));
         const QString fallback = QSysInfo::machineHostName().trimmed();
         const QString hostLabel = raw.isEmpty() ? fallback : raw;

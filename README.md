@@ -39,16 +39,16 @@
 ## 📸 &nbsp;Showcase
 
 <p align="center"><img src="preview/splitgif.gif" alt="Split-pane demo" width="820"/></p>
-<p align="center"><em>Drag a session chip onto another pane and watch the live split-preview — then drop into any edge.</em></p>
+<p align="center"><em>Drag a session chip onto another pane and watch the live split-preview - then drop into any edge.</em></p>
 
 <p align="center"><img src="preview/mainpage.jpg" alt="clientosh dashboard" width="820"/></p>
-<p align="center"><em>The dashboard — your launchpad for every session.</em></p>
+<p align="center"><em>The dashboard - your launchpad for every session.</em></p>
 
 <p align="center"><img src="preview/terminalpage.jpg" alt="clientosh terminal" width="820"/></p>
 <p align="center"><em>A live terminal pane with scrollback, keyword highlighting, and the dark monospace look.</em></p>
 
 <p align="center"><img src="preview/terminalsplitterminalpage.jpg" alt="Split terminal workspace" width="820"/></p>
-<p align="center"><em>Two terminals tiled in one window — no separate OS windows to juggle.</em></p>
+<p align="center"><em>Two terminals tiled in one window - no separate OS windows to juggle.</em></p>
 
 <p align="center"><img src="preview/terminalsplitsftppage.jpg" alt="Terminal + SFTP split" width="820"/></p>
 <p align="center"><em>Terminal and SFTP file manager docked side-by-side for the same session.</em></p>
@@ -59,20 +59,20 @@
 
 ## ✨ &nbsp;Key Features
 
-- **🪶 Lightweight & native** — idles at roughly **~30 MB RAM**, because clientosh is written native against **Qt 6 widgets in C++** — no Electron, no bundled Chromium, no JVM. It launches in a blink and stays out of your memory even with many panes open.
-- **🧱 Split-pane workspace, single window** — drag a session chip onto a live pane to preview the viewport, then drop onto a `Left` / `Right` / `Top` / `Bottom` zone to dock. Terminal **and** SFTP panes share one OS window with animated, eased splitter morphing.
-- **🔒 Layer-0 secure vault** — session metadata and secrets are encrypted at rest with **AES-256-GCM** (OpenSSL EVP), backed by your OS keyring: **Windows Credential Manager, macOS Keychain, and Secret Service (libsecret)** — with a machine-bound encrypted-file fallback that keeps things working headless.
-- **🗝️ Battle-tested private-key auth** — import and save SSH keys *into the keyring itself*, pick them from a dropdown, and decrypt passphrase-protected keys on the fly. Decrypted payloads are **zeroed in memory** after use.
-- **⚡ Non-blocking threading model** — SSH auth, shell I/O, SFTP, and live stats all run on **worker threads**; the GUI never freezes on connect or auth.
-- **🖥️ Hand-rolled VT100/xterm emulator** — full scrollback buffer, 256-color + true SGR attributes, alt-screen, mouse reporting & tracking, box-drawing glyphs, DEC character sets, and live keyword/address highlighting — all in pure Qt widgets.
-- **📁 Bundled SFTP file manager** — browse, upload, download, and delete remote files for the active session, with details/compact views.
-- **🔀 Server-to-server SFTP transfer** — move files **directly between two remote hosts** through a temporary staging area, with per-file progress, verbose logging, and an atomic cancel that cleans up after itself.
-- **📊 Live server stats** — per-session CPU / RAM / disk readouts pushed over a dedicated SSH channel on a configurable interval.
-- **🪟 Detach & re-attach** — pull a terminal out into its own viewport, then dock it right back into the workspace.
-- **🎨 Raw dark UI with motion** — flat, high-contrast monospace theme with subtle eased glows and hover fills (`src/ui/Motion`), plus a light theme, adjustable fonts, and optional blurred background images.
-- **🔧 Single-source-of-truth builds** — version bumped once in `project(...)` flows through the About tab, Windows RC resources, NSIS/Inno installers, and package metadata automatically.
+- **🪶 Lightweight & native** - idles at roughly **~30 MB RAM**, because clientosh is written native against **Qt 6 widgets in C++** - no Electron, no bundled Chromium, no JVM. It launches in a blink and stays out of your memory even with many panes open.
+- **🧱 Split-pane workspace, single window** - drag a session chip onto a live pane to preview the viewport, then drop onto a `Left` / `Right` / `Top` / `Bottom` zone to dock. Terminal **and** SFTP panes share one OS window with animated, eased splitter morphing.
+- **🔒 Layer-0 secure vault** - session metadata and secrets are encrypted at rest with **AES-256-GCM** (OpenSSL EVP), backed by your OS keyring: **Windows Credential Manager, macOS Keychain, and Secret Service (libsecret)** - with a machine-bound encrypted-file fallback that keeps things working headless.
+- **🗝️ Battle-tested private-key auth** - import and save SSH keys *into the keyring itself*, pick them from a dropdown, and decrypt passphrase-protected keys on the fly. Decrypted payloads are **zeroed in memory** after use.
+- **⚡ Non-blocking threading model** - SSH auth, shell I/O, SFTP, and live stats all run on **worker threads**; the GUI never freezes on connect or auth.
+- **🖥️ Hand-rolled VT100/xterm emulator** - full scrollback buffer, 256-color + true SGR attributes, alt-screen, mouse reporting & tracking, box-drawing glyphs, DEC character sets, and live keyword/address highlighting - all in pure Qt widgets.
+- **📁 Bundled SFTP file manager** - browse, upload, download, and delete remote files for the active session, with details/compact views.
+- **🔀 Server-to-server SFTP transfer** - move files **directly between two remote hosts** through a temporary staging area, with per-file progress, verbose logging, and an atomic cancel that cleans up after itself.
+- **📊 Live server stats** - per-session CPU / RAM / disk readouts pushed over a dedicated SSH channel on a configurable interval.
+- **🪟 Detach & re-attach** - pull a terminal out into its own viewport, then dock it right back into the workspace.
+- **🎨 Raw dark UI with motion** - flat, high-contrast monospace theme with subtle eased glows and hover fills (`src/ui/Motion`), plus a light theme, adjustable fonts, and optional blurred background images.
+- **🔧 Single-source-of-truth builds** - version bumped once in `project(...)` flows through the About tab, Windows RC resources, NSIS/Inno installers, and package metadata automatically.
 
-> 💡 **What makes clientosh "fast"?** It's a **native Qt 6 / C++** app — no Electron or web-view overhead — so it's snappy to launch and sips about **~30 MB RAM**. Network I/O never touches the UI thread, the vault decrypts near-instantly via an in-memory machine-bound key (no keyring/DPAPI latency at launch), and animations are vsync-paced with no continuous timers while idle.
+> 💡 **What makes clientosh "fast"?** It's a **native Qt 6 / C++** app - no Electron or web-view overhead - so it's snappy to launch and sips about **~30 MB RAM**. Network I/O never touches the UI thread, the vault decrypts near-instantly via an in-memory machine-bound key (no keyring/DPAPI latency at launch), and animations are vsync-paced with no continuous timers while idle.
 
 <br/>
 
@@ -94,7 +94,7 @@
 | **Language** | C++17 |
 | **UI toolkit** | Qt 6 (`Widgets`, `Network`, `Svg`) |
 | **SSH / SFTP** | libssh 2.x |
-| **Cryptography** | OpenSSL EVP — AES-256-GCM authenticated encryption |
+| **Cryptography** | OpenSSL EVP - AES-256-GCM authenticated encryption |
 | **Keyring** | Windows Credential Manager · macOS Keychain · libsecret (dlopen) |
 | **Build system** | CMake ≥ 3.21 + Ninja / Unix Makefiles / MinGW Makefiles |
 | **Packaging** | CPack (deb/rpm) · Inno Setup · NSIS · dockerized Arch makepkg · AppImage · dmg |
@@ -121,7 +121,7 @@ flowchart TB
     SW -->|"drag → edge zones"| FrameTerm
     SW -->|"drag → edge zones"| FrameSftp
 
-    subgraph Backend["core — worker threads"]
+    subgraph Backend["core - worker threads"]
         direction TB
         Ssh["SshSession (QThread)"]
         Mgr["SessionManager"]
@@ -139,7 +139,7 @@ flowchart TB
     FrameSftp --> Sftp
     FrameSftp --> Cross
 
-    subgraph Vault["VaultManager / Crypto — AES-256-GCM at rest"]
+    subgraph Vault["VaultManager / Crypto - AES-256-GCM at rest"]
         VaultMgr["KeyringAdapter"]
         VaultMgr --- K["Credential Manager · Keychain · Secret Service"]
     end
@@ -147,9 +147,9 @@ flowchart TB
     Mgr --> VaultMgr
 ```
 
-**Threading model** — every network concern (auth, shell I/O, SFTP, stats polling) runs on a dedicated worker thread. The GUI thread issues commands and consumes queued signals; it never blocks on a socket.
+**Threading model** - every network concern (auth, shell I/O, SFTP, stats polling) runs on a dedicated worker thread. The GUI thread issues commands and consumes queued signals; it never blocks on a socket.
 
-**Security model** — two encrypted files:
+**Security model** - two encrypted files:
 - `connects.json` (fast metadata) is locked with an **in-memory machine-bound key** (SHA-256 of machine-id + per-user scope) for near-instant launch.
 - `dbvault` (passwords · passphrases · imported keys) is AES-256-GCM encrypted under a random 256-bit master key persisted in the **OS keyring**, with a graceful file fallback. Both are written **atomically** (temp file + rename) so a crash can never corrupt them.
 
@@ -170,7 +170,7 @@ flowchart TB
 ### Install dependencies
 
 <details>
-<summary><b>🪟 Windows — MSYS2 (MinGW / UCRT64)</b></summary>
+<summary><b>🪟 Windows - MSYS2 (MinGW / UCRT64)</b></summary>
 
 ```bash
 pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake \
@@ -199,7 +199,7 @@ sudo dnf install cmake gcc-c++ qt6-qtbase-devel qt6-qtsvg-devel libssh-devel ope
 </details>
 
 <details>
-<summary><b>🍎 macOS — Homebrew</b></summary>
+<summary><b>🍎 macOS - Homebrew</b></summary>
 
 ```bash
 brew install cmake qt libssh openssl@3 pkg-config
@@ -226,7 +226,7 @@ cmake -S . -B build-linux -DCMAKE_PREFIX_PATH=/usr   # Debian/Ubuntu (usually /u
 cmake -S . -B build-linux -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x/gcc_64
 ```
 
-**🪟 Windows — Qt + MinGW (pinned Qt 6.9.2)** — the recommended path is the CMake preset, which pins the build to **exactly Qt 6.9.2** plus its matching **MinGW 13.1.0** toolchain and libssh/OpenSSL from MSYS2 — the same set the release CI uses, so the app renders and behaves identically to the released build.
+**🪟 Windows - Qt + MinGW (pinned Qt 6.9.2)** - the recommended path is the CMake preset, which pins the build to **exactly Qt 6.9.2** plus its matching **MinGW 13.1.0** toolchain and libssh/OpenSSL from MSYS2 - the same set the release CI uses, so the app renders and behaves identically to the released build.
 
 ```powershell
 cmake --preset windows-qt692-mingw   # Qt 6.9.2 + MinGW 13.1, outputs to build-win/
@@ -250,7 +250,7 @@ cmake --build  --preset windows-qt692-mingw
 | **macOS** | `.dmg` |
 
 ```bash
-# Linux — .deb
+# Linux - .deb
 chmod +x scripts/build-deb.sh
 ./scripts/build-deb.sh
 sudo apt install ./build-deb/clientosh_*.deb
@@ -266,7 +266,7 @@ sudo apt install ./build-deb/clientosh_*.deb
 
 From the dashboard, give a session a **name**, **host**, **port**, and **user**. Choose SSH (interactive terminal) or SFTP-only mode.
 
-> By default, saved credentials are *rejected* unless you explicitly opt in to store a password — secrets live only in the encrypted keyring vault, never in plaintext.
+> By default, saved credentials are *rejected* unless you explicitly opt in to store a password - secrets live only in the encrypted keyring vault, never in plaintext.
 
 ### 2. Connect
 
@@ -278,7 +278,7 @@ Drag a session chip onto another pane, hover to preview the split, then drop ont
 
 ### 4. SFTP
 
-Click the folder icon in the top bar to open the file manager for the active session — browse, upload, download, and delete remote files. Dock it beside the terminal for a single-pane workflow.
+Click the folder icon in the top bar to open the file manager for the active session - browse, upload, download, and delete remote files. Dock it beside the terminal for a single-pane workflow.
 
 ### 5. Cross-server transfer
 
@@ -296,7 +296,7 @@ When two SFTP sessions are open, move files **between servers** without ever tou
 [xfer 12:01:03.112] xfer: 3 entries from prod-db -> staging-box:22 staging=…/clientosh_xfer_1
 [xfer 12:01:04.001] xfer: file 'backup.sql' isDir=false
 [xfer 12:01:05.220] xfer: file 'uploads' isDir=true
-[xfer 12:01:05.224] xfer: download failed for 'uploads' err=NO_SUCH_PATH (22) — path not found
+[xfer 12:01:05.224] xfer: download failed for 'uploads' err=NO_SUCH_PATH (22) - path not found
 [finished] transferred backup.sql
 ```
 
@@ -328,7 +328,7 @@ Settings are persisted with Qt's `QSettings` (registry on Windows, INI/plist els
 | `settings/fontSize` | `int` | `11` | Terminal font size in points (9–22) |
 | `settings/fontFamily` | `string` | *(auto)* | Monospace terminal face (empty = auto-pick) |
 | `settings/terminalFg` / `terminalBg` | `string` | per theme | Terminal foreground / background colors |
-| `settings/terminalBgImage` | `string` | — | Optional blurred background image |
+| `settings/terminalBgImage` | `string` | - | Optional blurred background image |
 | `settings/terminalBgOpacity` / `terminalBgBlur` | `qreal` / `int` | `0.5` / `0` | Background image opacity / blur radius |
 | `settings/animationsEnabled` | `bool` | `true` | UI motion + ease transitions |
 | `settings/savePasswordDefault` | `bool` | `false` | Default "save password" for new sessions |
@@ -340,7 +340,7 @@ Settings are persisted with Qt's `QSettings` (registry on Windows, INI/plist els
 | `settings/highlightAddresses` | `bool` | `true` | Highlight IP/addresses in terminal |
 | `settings/highlightLogKeywords` | `bool` | `true` | Highlight log keywords in terminal |
 | `settings/ctrlScrollFontZoom` | `bool` | `true` | `Ctrl` + scroll zooms the font |
-| `settings/defaultHost` / `defaultUser` / `defaultPort` | — | `127.0.0.1` / — / `22` | Prefill for the new-session dialog |
+| `settings/defaultHost` / `defaultUser` / `defaultPort` | - | `127.0.0.1` / - / `22` | Prefill for the new-session dialog |
 | `shortcut*` | `string` | see table | Every shortcut + its enable flag |
 
 <br/>
@@ -375,11 +375,11 @@ Contributions are welcome! Please:
 3. Keep builds clean on **Linux, macOS, and Windows**.
 4. Open a **pull request** against `main`.
 
-The **CI** workflow builds and smoke-tests the project on Ubuntu, macOS, and Windows (MSYS2) for every push and PR. The **Release** workflow produces `.deb`, `.rpm`, `.AppImage`, `.tar.gz`, `.pkg.tar.zst`, Windows installers, and a macOS `.dmg` whenever you push a `v*` tag — plus a `CHECKSUMS.txt`.
+The **CI** workflow builds and smoke-tests the project on Ubuntu, macOS, and Windows (MSYS2) for every push and PR. The **Release** workflow produces `.deb`, `.rpm`, `.AppImage`, `.tar.gz`, `.pkg.tar.zst`, Windows installers, and a macOS `.dmg` whenever you push a `v*` tag - plus a `CHECKSUMS.txt`.
 
 > 🔐 **Security note:** host-key checking is intentionally disabled to keep the local client raw and friction-free. Prefer running clientosh on **trusted networks** until key verification (the top roadmap item) lands.
 
-> 💡 **Pro tip:** because the app version lives only in `project(VERSION ...)` at the top of `CMakeLists.txt`, bump it **once** and every artifact — the About tab, Windows RC, and both installers — follows automatically.
+> 💡 **Pro tip:** because the app version lives only in `project(VERSION ...)` at the top of `CMakeLists.txt`, bump it **once** and every artifact - the About tab, Windows RC, and both installers - follows automatically.
 
 <br/>
 

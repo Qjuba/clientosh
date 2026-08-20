@@ -173,11 +173,17 @@ add_executable(clientosh
     src/TopNavBar.cpp
     src/SftpWindow.h
     src/SftpWindow.cpp
+    src/platform/WindowStayOnTop.h
+    src/platform/WindowStayOnTop.cpp
     src/ui/Motion.h
     src/ui/Motion.cpp
     resources.qrc
     $<$<BOOL:${WIN32}>:${CLIENTOSH_GENERATED_DIR}/clientosh.rc>
 )
+
+if(APPLE)
+    target_sources(clientosh PRIVATE src/platform/WindowStayOnTop_mac.mm)
+endif()
 
 target_include_directories(clientosh PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -198,6 +204,7 @@ if(APPLE)
         "-framework Security"
         "-framework IOKit"
         "-framework CoreFoundation"
+        "-framework AppKit"
     )
 endif()
 

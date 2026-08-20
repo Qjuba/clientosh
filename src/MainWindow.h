@@ -9,6 +9,7 @@
 
 class QStackedWidget;
 class QShortcut;
+class QShowEvent;
 class SessionManager;
 class DashboardPage;
 class SessionWorkspace;
@@ -25,6 +26,7 @@ public:
 
 protected:
     void closeEvent(QCloseEvent* event) override;
+    void showEvent(QShowEvent* event) override;
 
 private:
     void applyTheme();

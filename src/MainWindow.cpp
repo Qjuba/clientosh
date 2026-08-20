@@ -5,6 +5,7 @@
 #include "core/AppSettings.h"
 #include "core/SessionManager.h"
 #include "core/SessionProfile.h"
+#include "platform/WindowStayOnTop.h"
 #include "SessionWorkspace.h"
 #include "SftpWindow.h"
 #include "TerminalWidget.h"
@@ -15,11 +16,13 @@
 #include <QEvent>
 #include <QEventLoop>
 #include <QIcon>
+#include <QMenu>
 #include <QMessageBox>
 #include <QPointer>
 #include <QSet>
 #include <QSettings>
 #include <QShortcut>
+#include <QShowEvent>
 #include <QStackedWidget>
 #include <QTimer>
 #include <QUuid>
@@ -199,17 +202,38 @@ MainWindow::MainWindow(QWidget* parent)
 
 void MainWindow::applyAlwaysOnTop(bool on)
 {
-    Qt::WindowFlags flags = windowFlags();
-    if (on) {
-        flags |= Qt::WindowStaysOnTopHint;
-    } else {
-        flags &= ~Qt::WindowStaysOnTopHint;
+    setWindowStayOnTop(this, on);
+
+    // Keep any other clientosh top-level windows in sync (detached panes, etc.).
+    const auto tops = QApplication::topLevelWidgets();
+    for (QWidget* w : tops) {
+        if (!w || w == this || !w->isWindow()) {
+            continue;
+        }
+        const Qt::WindowFlags f = w->windowFlags();
+        if (f & Qt::Popup) {
+            continue;
+        }
+        if (qobject_cast<QMenu*>(w)) {
+            continue;
+        }
+        const QString name = w->objectName();
+        if (name == QLatin1String("terminalWindow")
+            || name == QLatin1String("sftpWindow")
+            || name.startsWith(QLatin1String("clientosh"))) {
+            setWindowStayOnTop(w, on);
+        }
     }
-    if (flags == windowFlags()) {
-        return;
+}
+
+void MainWindow::showEvent(QShowEvent* event)
+{
+    QMainWindow::showEvent(event);
+    // Native windows are sometimes recreated on show (esp. macOS / Wayland);
+    // re-assert the hint so the setting survives across platforms.
+    if (AppSettings::alwaysOnTop()) {
+        setWindowStayOnTop(this, true);
     }
-    setWindowFlags(flags);
-    show();
 }
 
 void MainWindow::closeEvent(QCloseEvent* event)

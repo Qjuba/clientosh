@@ -113,6 +113,7 @@ private:
     void importKeyIntoKeyring();
     void removeSelectedKeyringKey();
     void onKeyringSelectionChanged(int index);
+    void updateAuthMethodUi();
     void fillProfileFromForm(SessionProfile* profile) const;
     int profileIndexById(const QString& id) const;
     QToolButton* makeNavButton(const QString& iconPath, const QString& text, QWidget* parent);
@@ -151,11 +152,17 @@ private:
     QPlainTextEdit* m_logsView = nullptr;
 
     QLabel* m_formTitle = nullptr;
+    QLabel* m_formSub = nullptr;
     QLineEdit* m_nameEdit = nullptr;
     QComboBox* m_connectionModeCombo = nullptr;
     QLineEdit* m_hostEdit = nullptr;
     QSpinBox* m_portSpin = nullptr;
     QLineEdit* m_userEdit = nullptr;
+    QComboBox* m_authMethodCombo = nullptr;
+    QWidget* m_authPasswordPanel = nullptr;
+    QWidget* m_authKeyringPanel = nullptr;
+    QWidget* m_authKeyFilePanel = nullptr;
+    QWidget* m_authPassphrasePanel = nullptr;
     QLineEdit* m_passEdit = nullptr;
     QCheckBox* m_savePass = nullptr;
     QLineEdit* m_keyPathEdit = nullptr;

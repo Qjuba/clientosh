@@ -1036,99 +1036,195 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
 
     // ---- Form page ----
     m_formPage = new QWidget;
-    auto* formLay = new QVBoxLayout(m_formPage);
-    formLay->setContentsMargins(16, 12, 16, 10);
-    formLay->setSpacing(6);
+    auto* formOuter = new QVBoxLayout(m_formPage);
+    formOuter->setContentsMargins(0, 0, 0, 0);
+    formOuter->setSpacing(0);
 
-    m_formTitle = new QLabel(QStringLiteral("New Session"), m_formPage);
-    m_formTitle->setObjectName(QStringLiteral("dashPageTitle"));
-    formLay->addWidget(m_formTitle);
+    auto* formScroll = new QScrollArea(m_formPage);
+    formScroll->setWidgetResizable(true);
+    formScroll->setFrameShape(QFrame::NoFrame);
+    formScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    auto* formInner = new QWidget(formScroll);
+    formInner->setObjectName(QStringLiteral("dashMain"));
+    auto* formLay = new QVBoxLayout(formInner);
+    formLay->setContentsMargins(20, 16, 20, 16);
+    formLay->setSpacing(10);
+    formScroll->setWidget(formInner);
 
-    auto addLabeled = [&](const QString& label, QWidget* field) {
-        auto* lab = new QLabel(label, m_formPage);
-        lab->setObjectName(QStringLiteral("fieldLabel"));
+    // Title lives in the top bar only (updateTopBar) — keep these off-screen
+    // as the source of the page heading text.
+    m_formTitle = new QLabel(QStringLiteral("New Session"), formInner);
+    m_formTitle->hide();
+    m_formSub = new QLabel(QStringLiteral("Connection details for a saved host"), formInner);
+    m_formSub->hide();
+
+    auto addSection = [&](const QString& title) {
+        auto* lab = new QLabel(title, formInner);
+        lab->setObjectName(QStringLiteral("settingsSectionTitle"));
         formLay->addWidget(lab);
-        formLay->addWidget(field);
+        auto* rule = new QFrame(formInner);
+        rule->setObjectName(QStringLiteral("settingsDivider"));
+        rule->setFrameShape(QFrame::NoFrame);
+        rule->setFixedHeight(1);
+        formLay->addWidget(rule);
     };
 
-    m_nameEdit = new QLineEdit(m_formPage);
-    m_nameEdit->setPlaceholderText(QStringLiteral("optional display name"));
-    m_connectionModeCombo = new QComboBox(m_formPage);
-    m_connectionModeCombo->addItem(QStringLiteral("SSH (terminal + SFTP)"),
+    auto addLabeled = [&](QVBoxLayout* into, const QString& label, QWidget* field) {
+        auto* lab = new QLabel(label, formInner);
+        lab->setObjectName(QStringLiteral("fieldLabel"));
+        into->addWidget(lab);
+        into->addWidget(field);
+    };
+
+    // ---- Connection ----
+    addSection(QStringLiteral("Connection"));
+
+    m_nameEdit = new QLineEdit(formInner);
+    m_nameEdit->setPlaceholderText(QStringLiteral("e.g. production, home lab"));
+    m_connectionModeCombo = new QComboBox(formInner);
+    m_connectionModeCombo->addItem(QStringLiteral("SSH - terminal + SFTP"),
                                    static_cast<int>(ConnectionMode::Ssh));
-    m_connectionModeCombo->addItem(QStringLiteral("SFTP only (file manager)"),
+    m_connectionModeCombo->addItem(QStringLiteral("SFTP only - file manager"),
                                    static_cast<int>(ConnectionMode::SftpOnly));
-    m_hostEdit = new QLineEdit(m_formPage);
-    m_hostEdit->setPlaceholderText(QStringLiteral("host"));
+
+    m_hostEdit = new QLineEdit(formInner);
+    m_hostEdit->setPlaceholderText(QStringLiteral("hostname or IP"));
     m_hostEdit->setText(AppSettings::defaultHost());
-    m_portSpin = new QSpinBox(m_formPage);
+    m_portSpin = new QSpinBox(formInner);
     m_portSpin->setRange(1, 65535);
     m_portSpin->setValue(AppSettings::defaultPort());
-    m_userEdit = new QLineEdit(m_formPage);
-    m_userEdit->setPlaceholderText(QStringLiteral("user"));
+    m_portSpin->setMinimumWidth(90);
+    m_userEdit = new QLineEdit(formInner);
+    m_userEdit->setPlaceholderText(QStringLiteral("username"));
     m_userEdit->setText(AppSettings::defaultUser());
-    m_passEdit = new QLineEdit(m_formPage);
-    m_passEdit->setPlaceholderText(QStringLiteral("password (optional if using a key)"));
-    m_passEdit->setEchoMode(QLineEdit::Password);
-    m_savePass = new QCheckBox(QStringLiteral("save password with profile"), m_formPage);
 
-    m_keyPathEdit = new QLineEdit(m_formPage);
-    m_keyPathEdit->setPlaceholderText(QStringLiteral("path to private key (optional)"));
-    m_browseKeyBtn = new QPushButton(QStringLiteral("browse…"), m_formPage);
-    m_browseKeyBtn->setObjectName(QStringLiteral("dashButton"));
-    m_browseKeyBtn->setFocusPolicy(Qt::NoFocus);
-    auto* keyRow = new QWidget(m_formPage);
-    auto* keyLay = new QHBoxLayout(keyRow);
-    keyLay->setContentsMargins(0, 0, 0, 0);
-    keyLay->setSpacing(6);
-    keyLay->addWidget(m_keyPathEdit, 1);
-    keyLay->addWidget(m_browseKeyBtn);
+    addLabeled(formLay, QStringLiteral("Display name (optional)"), m_nameEdit);
+    addLabeled(formLay, QStringLiteral("Type"), m_connectionModeCombo);
 
-    // Keyring: choose a pre-saved key, or import a new one into the keyring.
-    m_keyringCombo = new QComboBox(m_formPage);
-    m_importKeyBtn = new QPushButton(QStringLiteral("import…"), m_formPage);
-    m_importKeyBtn->setObjectName(QStringLiteral("dashButton"));
-    m_importKeyBtn->setFocusPolicy(Qt::NoFocus);
-    m_removeKeyBtn = new QPushButton(QStringLiteral("remove"), m_formPage);
-    m_removeKeyBtn->setObjectName(QStringLiteral("dashButton"));
-    m_removeKeyBtn->setFocusPolicy(Qt::NoFocus);
-    auto* keyringRow = new QWidget(m_formPage);
-    auto* keyringLay = new QHBoxLayout(keyringRow);
-    keyringLay->setContentsMargins(0, 0, 0, 0);
-    keyringLay->setSpacing(6);
-    keyringLay->addWidget(m_keyringCombo, 1);
-    keyringLay->addWidget(m_importKeyBtn);
-    keyringLay->addWidget(m_removeKeyBtn);
+    auto* hostPortRow = new QWidget(formInner);
+    auto* hostPortLay = new QHBoxLayout(hostPortRow);
+    hostPortLay->setContentsMargins(0, 0, 0, 0);
+    hostPortLay->setSpacing(10);
+    auto* hostCol = new QVBoxLayout;
+    hostCol->setContentsMargins(0, 0, 0, 0);
+    hostCol->setSpacing(4);
+    auto* portCol = new QVBoxLayout;
+    portCol->setContentsMargins(0, 0, 0, 0);
+    portCol->setSpacing(4);
+    auto* hostLab = new QLabel(QStringLiteral("Host"), formInner);
+    hostLab->setObjectName(QStringLiteral("fieldLabel"));
+    auto* portLab = new QLabel(QStringLiteral("Port"), formInner);
+    portLab->setObjectName(QStringLiteral("fieldLabel"));
+    hostCol->addWidget(hostLab);
+    hostCol->addWidget(m_hostEdit);
+    portCol->addWidget(portLab);
+    portCol->addWidget(m_portSpin);
+    hostPortLay->addLayout(hostCol, 1);
+    hostPortLay->addLayout(portCol, 0);
+    formLay->addWidget(hostPortRow);
 
-    m_keyPassEdit = new QLineEdit(m_formPage);
-    m_keyPassEdit->setPlaceholderText(QStringLiteral("key passphrase (if encrypted)"));
-    m_keyPassEdit->setEchoMode(QLineEdit::Password);
-    m_saveKeyPass = new QCheckBox(QStringLiteral("save key passphrase with profile"), m_formPage);
+    addLabeled(formLay, QStringLiteral("User"), m_userEdit);
+    formLay->addSpacing(6);
 
-    auto* authHint = new QLabel(
-        QStringLiteral("auth: private key is tried first when a path is set; otherwise password"),
-        m_formPage);
-    authHint->setObjectName(QStringLiteral("dashHint"));
-    authHint->setWordWrap(true);
+    // ---- Authentication ----
+    addSection(QStringLiteral("Authentication"));
 
-    addLabeled(QStringLiteral("name"), m_nameEdit);
-    addLabeled(QStringLiteral("connection type"), m_connectionModeCombo);
-    addLabeled(QStringLiteral("host"), m_hostEdit);
-    addLabeled(QStringLiteral("port"), m_portSpin);
-    addLabeled(QStringLiteral("user"), m_userEdit);
-    addLabeled(QStringLiteral("password"), m_passEdit);
-    formLay->addWidget(m_savePass);
-    addLabeled(QStringLiteral("key from keyring"), keyringRow);
-    addLabeled(QStringLiteral("private key file"), keyRow);
-    addLabeled(QStringLiteral("key passphrase"), m_keyPassEdit);
-    formLay->addWidget(m_saveKeyPass);
-    formLay->addWidget(authHint);
+    m_authMethodCombo = new QComboBox(formInner);
+    m_authMethodCombo->addItem(QStringLiteral("Password"), 0);
+    m_authMethodCombo->addItem(QStringLiteral("Private key (keyring)"), 1);
+    m_authMethodCombo->addItem(QStringLiteral("Private key (file)"), 2);
+    addLabeled(formLay, QStringLiteral("Method"), m_authMethodCombo);
 
-    auto* formRow = new QHBoxLayout;
-    auto* backBtn = new QPushButton(QStringLiteral("Cancel"), m_formPage);
-    auto* saveBtn = new QPushButton(QStringLiteral("Save profile"), m_formPage);
+    m_authPasswordPanel = new QWidget(formInner);
+    {
+        auto* lay = new QVBoxLayout(m_authPasswordPanel);
+        lay->setContentsMargins(0, 4, 0, 0);
+        lay->setSpacing(6);
+        m_passEdit = new QLineEdit(m_authPasswordPanel);
+        m_passEdit->setPlaceholderText(QStringLiteral("password"));
+        m_passEdit->setEchoMode(QLineEdit::Password);
+        m_savePass = new QCheckBox(QStringLiteral("Save password with this profile"), m_authPasswordPanel);
+        addLabeled(lay, QStringLiteral("Password"), m_passEdit);
+        lay->addWidget(m_savePass);
+    }
+
+    m_authKeyringPanel = new QWidget(formInner);
+    {
+        auto* lay = new QVBoxLayout(m_authKeyringPanel);
+        lay->setContentsMargins(0, 4, 0, 0);
+        lay->setSpacing(6);
+        m_keyringCombo = new QComboBox(m_authKeyringPanel);
+        m_importKeyBtn = new QPushButton(QStringLiteral("Import…"), m_authKeyringPanel);
+        m_importKeyBtn->setObjectName(QStringLiteral("dashButton"));
+        m_importKeyBtn->setFocusPolicy(Qt::NoFocus);
+        m_removeKeyBtn = new QPushButton(QStringLiteral("Remove"), m_authKeyringPanel);
+        m_removeKeyBtn->setObjectName(QStringLiteral("dashButton"));
+        m_removeKeyBtn->setFocusPolicy(Qt::NoFocus);
+        auto* keyringRow = new QWidget(m_authKeyringPanel);
+        auto* keyringLay = new QHBoxLayout(keyringRow);
+        keyringLay->setContentsMargins(0, 0, 0, 0);
+        keyringLay->setSpacing(6);
+        keyringLay->addWidget(m_keyringCombo, 1);
+        keyringLay->addWidget(m_importKeyBtn);
+        keyringLay->addWidget(m_removeKeyBtn);
+        addLabeled(lay, QStringLiteral("Saved key"), keyringRow);
+        auto* hint = new QLabel(
+            QStringLiteral("Keys are stored encrypted in the local keyring."),
+            m_authKeyringPanel);
+        hint->setObjectName(QStringLiteral("dashHint"));
+        hint->setWordWrap(true);
+        lay->addWidget(hint);
+    }
+
+    m_authKeyFilePanel = new QWidget(formInner);
+    {
+        auto* lay = new QVBoxLayout(m_authKeyFilePanel);
+        lay->setContentsMargins(0, 4, 0, 0);
+        lay->setSpacing(6);
+        m_keyPathEdit = new QLineEdit(m_authKeyFilePanel);
+        m_keyPathEdit->setPlaceholderText(QStringLiteral("path to private key"));
+        m_browseKeyBtn = new QPushButton(QStringLiteral("Browse…"), m_authKeyFilePanel);
+        m_browseKeyBtn->setObjectName(QStringLiteral("dashButton"));
+        m_browseKeyBtn->setFocusPolicy(Qt::NoFocus);
+        auto* keyRow = new QWidget(m_authKeyFilePanel);
+        auto* keyLay = new QHBoxLayout(keyRow);
+        keyLay->setContentsMargins(0, 0, 0, 0);
+        keyLay->setSpacing(6);
+        keyLay->addWidget(m_keyPathEdit, 1);
+        keyLay->addWidget(m_browseKeyBtn);
+        addLabeled(lay, QStringLiteral("Private key file"), keyRow);
+    }
+
+    m_authPassphrasePanel = new QWidget(formInner);
+    {
+        auto* lay = new QVBoxLayout(m_authPassphrasePanel);
+        lay->setContentsMargins(0, 4, 0, 0);
+        lay->setSpacing(6);
+        m_keyPassEdit = new QLineEdit(m_authPassphrasePanel);
+        m_keyPassEdit->setPlaceholderText(QStringLiteral("leave empty if the key is not encrypted"));
+        m_keyPassEdit->setEchoMode(QLineEdit::Password);
+        m_saveKeyPass = new QCheckBox(QStringLiteral("Save passphrase with this profile"),
+                                     m_authPassphrasePanel);
+        addLabeled(lay, QStringLiteral("Key passphrase (optional)"), m_keyPassEdit);
+        lay->addWidget(m_saveKeyPass);
+    }
+
+    formLay->addWidget(m_authPasswordPanel);
+    formLay->addWidget(m_authKeyringPanel);
+    formLay->addWidget(m_authKeyFilePanel);
+    formLay->addWidget(m_authPassphrasePanel);
+    formLay->addStretch(1);
+
+    // ---- Footer actions ----
+    auto* formFooter = new QWidget(m_formPage);
+    formFooter->setObjectName(QStringLiteral("settingsFooter"));
+    auto* formRow = new QHBoxLayout(formFooter);
+    formRow->setContentsMargins(16, 8, 16, 10);
+    formRow->setSpacing(8);
+    auto* backBtn = new QPushButton(QStringLiteral("Cancel"), formFooter);
+    auto* saveBtn = new QPushButton(QStringLiteral("Save"), formFooter);
     auto* connectBtn = new QPushButton(QIcon(QStringLiteral(":/icons/connect.svg")),
-                                       QStringLiteral("Connect"), m_formPage);
+                                       QStringLiteral("Connect"), formFooter);
     m_saveProfileBtn = saveBtn;
     backBtn->setObjectName(QStringLiteral("dashButton"));
     saveBtn->setObjectName(QStringLiteral("dashButton"));
@@ -1141,8 +1237,9 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     formRow->addStretch(1);
     formRow->addWidget(saveBtn);
     formRow->addWidget(connectBtn);
-    formLay->addStretch(1);
-    formLay->addLayout(formRow);
+
+    formOuter->addWidget(formScroll, 1);
+    formOuter->addWidget(formFooter);
     m_stack->addWidget(m_formPage);
 
     root->addWidget(mainCol, 1);
@@ -1159,7 +1256,11 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     connect(m_importKeyBtn, &QPushButton::clicked, this, &DashboardPage::importKeyIntoKeyring);
     connect(m_removeKeyBtn, &QPushButton::clicked, this, &DashboardPage::removeSelectedKeyringKey);
     connect(m_keyringCombo, &QComboBox::currentIndexChanged, this, &DashboardPage::onKeyringSelectionChanged);
+    connect(m_authMethodCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+        updateAuthMethodUi();
+    });
     reloadKeyringCombo();
+    updateAuthMethodUi();
     connect(setSave, &QPushButton::clicked, this, &DashboardPage::saveSettingsUi);
     connect(m_settingsNav, &QListWidget::currentRowChanged, this, &DashboardPage::setSettingsCategory);
     connect(m_settingsAnimations, &QCheckBox::toggled, this, [](bool on) {
@@ -1616,7 +1717,7 @@ void DashboardPage::updateTopBar()
         break;
     case NavPage::Form:
         m_pageTitle->setText(m_formTitle->text());
-        m_pageSub->setText(QStringLiteral("connection details"));
+        m_pageSub->setText(m_formSub ? m_formSub->text() : QStringLiteral("connection details"));
         break;
     }
 }
@@ -1681,7 +1782,10 @@ void DashboardPage::showNewSessionForm()
     clearForm();
     m_editingId.clear();
     m_formTitle->setText(QStringLiteral("New Session"));
-    m_saveProfileBtn->setText(QStringLiteral("Save profile"));
+    if (m_formSub) {
+        m_formSub->setText(QStringLiteral("Connection details for a saved host"));
+    }
+    m_saveProfileBtn->setText(QStringLiteral("Save"));
     m_savePass->setChecked(AppSettings::savePasswordDefault());
     setNavPage(NavPage::Form);
     m_hostEdit->setFocus();
@@ -1697,7 +1801,10 @@ void DashboardPage::showEditSessionForm(const QString& profileId)
     loadProfileIntoForm(m_profiles[row]);
     m_editingId = m_profiles[row].id;
     m_formTitle->setText(QStringLiteral("Edit Session"));
-    m_saveProfileBtn->setText(QStringLiteral("Save changes"));
+    if (m_formSub) {
+        m_formSub->setText(QStringLiteral("Update connection details"));
+    }
+    m_saveProfileBtn->setText(QStringLiteral("Save"));
     setNavPage(NavPage::Form);
     m_nameEdit->setFocus();
 }
@@ -1713,10 +1820,16 @@ void DashboardPage::clearForm()
     m_savePass->setChecked(AppSettings::savePasswordDefault());
     m_keyPathEdit->clear();
     reloadKeyringCombo();
-    m_keyringCombo->setCurrentIndex(0); // "none"
+    if (m_keyringCombo->count() > 0) {
+        m_keyringCombo->setCurrentIndex(0);
+    }
     onKeyringSelectionChanged(m_keyringCombo->currentIndex());
     m_keyPassEdit->clear();
     m_saveKeyPass->setChecked(false);
+    if (m_authMethodCombo) {
+        m_authMethodCombo->setCurrentIndex(0);
+    }
+    updateAuthMethodUi();
 }
 
 void DashboardPage::loadProfileIntoForm(const SessionProfile& profile)
@@ -1731,19 +1844,29 @@ void DashboardPage::loadProfileIntoForm(const SessionProfile& profile)
     m_savePass->setChecked(profile.savePassword);
     m_keyPathEdit->setText(profile.privateKeyPath);
     reloadKeyringCombo();
+
+    int authMethod = 0; // password
     if (!profile.privateKeyId.trimmed().isEmpty()) {
-        // A pre-saved keyring key takes precedence over the file path.
+        authMethod = 1; // keyring
         const int idx = m_keyringCombo->findData(profile.privateKeyId);
         m_keyringCombo->setCurrentIndex(idx >= 0 ? idx : 0);
-        if (idx >= 0) {
-            m_keyPathEdit->clear();
+        m_keyPathEdit->clear();
+    } else if (!profile.privateKeyPath.trimmed().isEmpty()) {
+        authMethod = 2; // file
+        if (m_keyringCombo->count() > 0) {
+            m_keyringCombo->setCurrentIndex(0);
         }
-    } else {
+    } else if (m_keyringCombo->count() > 0) {
         m_keyringCombo->setCurrentIndex(0);
     }
     onKeyringSelectionChanged(m_keyringCombo->currentIndex());
     m_keyPassEdit->setText(profile.keyPassphrase);
     m_saveKeyPass->setChecked(profile.saveKeyPassphrase);
+    if (m_authMethodCombo) {
+        const int authIdx = m_authMethodCombo->findData(authMethod);
+        m_authMethodCombo->setCurrentIndex(authIdx >= 0 ? authIdx : 0);
+    }
+    updateAuthMethodUi();
 }
 
 void DashboardPage::browsePrivateKey()
@@ -1759,9 +1882,13 @@ void DashboardPage::browsePrivateKey()
         QStringLiteral("Private keys (id_rsa id_ed25519 id_ecdsa id_dsa *);;All files (*)"));
     if (!path.isEmpty()) {
         m_keyPathEdit->setText(QDir::toNativeSeparators(path));
-        // Manually choosing a file means "this path" is the chosen key — drop
-        // any keyring selection so the path is used.
-        m_keyringCombo->setCurrentIndex(0);
+        if (m_authMethodCombo) {
+            const int idx = m_authMethodCombo->findData(2);
+            if (idx >= 0) {
+                m_authMethodCombo->setCurrentIndex(idx);
+            }
+            updateAuthMethodUi();
+        }
     }
 }
 
@@ -1773,31 +1900,97 @@ void DashboardPage::reloadKeyringCombo()
     const QString prevId = m_keyringCombo->currentData().toString();
     m_keyringCombo->blockSignals(true);
     m_keyringCombo->clear();
-    m_keyringCombo->addItem(QStringLiteral("— none (use file path) —"), QString());
     VaultManager vault;
     const QVector<StoredKey> keys = vault.listStoredKeys();
-    for (const StoredKey& k : keys) {
-        QString label = k.name.trimmed().isEmpty() ? QStringLiteral("(unnamed)") : k.name;
-        if (!k.type.trimmed().isEmpty()) {
-            label += QStringLiteral("  ·  %1").arg(k.type);
+    if (keys.isEmpty()) {
+        m_keyringCombo->addItem(QStringLiteral("No keys yet - import one"), QString());
+    } else {
+        for (const StoredKey& k : keys) {
+            QString label = k.name.trimmed().isEmpty() ? QStringLiteral("(unnamed)") : k.name;
+            if (!k.type.trimmed().isEmpty()) {
+                label += QStringLiteral("  ·  %1").arg(k.type);
+            }
+            if (k.hasPassphrase) {
+                label += QStringLiteral("  ·  passphrase");
+            }
+            m_keyringCombo->addItem(label, k.id);
         }
-        if (k.hasPassphrase) {
-            label += QStringLiteral("  ·  passphrase");
-        }
-        m_keyringCombo->addItem(label, k.id);
     }
     const int idx = m_keyringCombo->findData(prevId);
     m_keyringCombo->setCurrentIndex(idx >= 0 ? idx : 0);
     m_keyringCombo->blockSignals(false);
 }
 
-void DashboardPage::onKeyringSelectionChanged(int index)
+void DashboardPage::updateAuthMethodUi()
 {
-    const bool hasKeyringKey = m_keyringCombo->currentData().toString().length() > 0;
-    m_removeKeyBtn->setEnabled(hasKeyringKey);
-    if (hasKeyringKey) {
-        // Keyring key takes precedence; a selected path would be ignored/confusing.
-        m_keyPathEdit->clear();
+    if (!m_authMethodCombo) {
+        return;
+    }
+    const int method = m_authMethodCombo->currentData().toInt();
+    const bool password = (method == 0);
+    const bool keyring = (method == 1);
+    const bool keyFile = (method == 2);
+    if (m_authPasswordPanel) {
+        m_authPasswordPanel->setVisible(password);
+    }
+    if (m_authKeyringPanel) {
+        m_authKeyringPanel->setVisible(keyring);
+    }
+    if (m_authKeyFilePanel) {
+        m_authKeyFilePanel->setVisible(keyFile);
+    }
+    if (m_authPassphrasePanel) {
+        m_authPassphrasePanel->setVisible(keyring || keyFile);
+    }
+}
+
+void DashboardPage::onKeyringSelectionChanged(int /*index*/)
+{
+    const bool hasKeyringKey = m_keyringCombo && !m_keyringCombo->currentData().toString().isEmpty();
+    if (m_removeKeyBtn) {
+        m_removeKeyBtn->setEnabled(hasKeyringKey);
+    }
+}
+
+void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
+{
+    if (!profile) {
+        return;
+    }
+    profile->name = m_nameEdit->text().trimmed();
+    profile->connectionMode = static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt());
+    profile->host = m_hostEdit->text().trimmed();
+    profile->port = m_portSpin->value();
+    profile->user = m_userEdit->text().trimmed();
+
+    const int method = m_authMethodCombo ? m_authMethodCombo->currentData().toInt() : 0;
+    if (method == 1) {
+        // Keyring key
+        profile->privateKeyId = m_keyringCombo->currentData().toString();
+        profile->privateKeyPath.clear();
+        profile->password.clear();
+        profile->savePassword = false;
+        profile->keyPassphrase = m_keyPassEdit->text();
+        profile->saveKeyPassphrase = m_saveKeyPass->isChecked();
+    } else if (method == 2) {
+        // Key file
+        profile->privateKeyId.clear();
+        profile->privateKeyPath = m_keyPathEdit->text().trimmed();
+        profile->password.clear();
+        profile->savePassword = false;
+        profile->keyPassphrase = m_keyPassEdit->text();
+        profile->saveKeyPassphrase = m_saveKeyPass->isChecked();
+    } else {
+        // Password
+        profile->privateKeyId.clear();
+        profile->privateKeyPath.clear();
+        profile->password = m_passEdit->text();
+        profile->savePassword = m_savePass->isChecked();
+        profile->keyPassphrase.clear();
+        profile->saveKeyPassphrase = false;
+        if (!profile->savePassword) {
+            profile->password.clear();
+        }
     }
 }
 
@@ -1857,6 +2050,13 @@ void DashboardPage::importKeyIntoKeyring()
     if (idx >= 0) {
         m_keyringCombo->setCurrentIndex(idx);
     }
+    if (m_authMethodCombo) {
+        const int authIdx = m_authMethodCombo->findData(1);
+        if (authIdx >= 0) {
+            m_authMethodCombo->setCurrentIndex(authIdx);
+        }
+        updateAuthMethodUi();
+    }
     onKeyringSelectionChanged(m_keyringCombo->currentIndex());
     m_hint->setText(QStringLiteral("key '%1' saved to keyring").arg(key.name));
     appendLog(QStringLiteral("imported key '%1' into keyring").arg(key.name));
@@ -1883,33 +2083,6 @@ void DashboardPage::removeSelectedKeyringKey()
     onKeyringSelectionChanged(m_keyringCombo->currentIndex());
     m_hint->setText(QStringLiteral("key removed from keyring"));
     appendLog(QStringLiteral("removed keyring key '%1'").arg(label));
-}
-
-void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
-{
-    if (!profile) {
-        return;
-    }
-    profile->name = m_nameEdit->text().trimmed();
-    profile->connectionMode = static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt());
-    profile->host = m_hostEdit->text().trimmed();
-    profile->port = m_portSpin->value();
-    profile->user = m_userEdit->text().trimmed();
-    profile->password = m_passEdit->text();
-    profile->savePassword = m_savePass->isChecked();
-    const QString keyringId = m_keyringCombo->currentData().toString();
-    if (!keyringId.isEmpty()) {
-        profile->privateKeyId = keyringId;
-        profile->privateKeyPath.clear();
-    } else {
-        profile->privateKeyId.clear();
-        profile->privateKeyPath = m_keyPathEdit->text().trimmed();
-    }
-    profile->keyPassphrase = m_keyPassEdit->text();
-    profile->saveKeyPassphrase = m_saveKeyPass->isChecked();
-    if (!profile->savePassword) {
-        profile->password.clear();
-    }
 }
 
 void DashboardPage::showSettings()
@@ -2459,13 +2632,20 @@ void DashboardPage::saveCurrentFormAsProfile()
     const QString user = m_userEdit->text().trimmed();
     if (host.isEmpty() || user.isEmpty()) {
         m_hint->setText(QStringLiteral("host and user required"));
-        setNavPage(NavPage::Hosts);
         return;
     }
-    const bool hasKey = !m_keyPathEdit->text().trimmed().isEmpty()
-        || !m_keyringCombo->currentData().toString().isEmpty();
-    if (m_passEdit->text().isEmpty() && !hasKey) {
-        m_hint->setText(QStringLiteral("provide a password or a private key"));
+
+    const int method = m_authMethodCombo ? m_authMethodCombo->currentData().toInt() : 0;
+    if (method == 0 && m_passEdit->text().isEmpty()) {
+        m_hint->setText(QStringLiteral("enter a password"));
+        return;
+    }
+    if (method == 1 && m_keyringCombo->currentData().toString().isEmpty()) {
+        m_hint->setText(QStringLiteral("import or select a keyring key"));
+        return;
+    }
+    if (method == 2 && m_keyPathEdit->text().trimmed().isEmpty()) {
+        m_hint->setText(QStringLiteral("choose a private key file"));
         return;
     }
 
@@ -2473,15 +2653,11 @@ void DashboardPage::saveCurrentFormAsProfile()
     if (!m_editingId.isEmpty()) {
         p.id = m_editingId;
     } else {
-        p = makeProfile(host, m_portSpin->value(), user, m_passEdit->text(), m_nameEdit->text());
+        p = makeProfile(host, m_portSpin->value(), user, QString(), m_nameEdit->text());
     }
     fillProfileFromForm(&p);
     p.host = host;
     p.user = user;
-    p.password = m_passEdit->text();
-    p.keyPassphrase = m_keyPassEdit->text();
-    p.savePassword = m_savePass->isChecked();
-    p.saveKeyPassphrase = m_saveKeyPass->isChecked();
     if (!p.savePassword) {
         p.password.clear();
     }
@@ -2493,10 +2669,11 @@ void DashboardPage::saveCurrentFormAsProfile()
         bool updated = false;
         for (SessionProfile& existing : m_profiles) {
             if (existing.id == m_editingId) {
-                if (p.savePassword && m_passEdit->text().isEmpty() && !existing.password.isEmpty()) {
+                if (method == 0 && p.savePassword && m_passEdit->text().isEmpty()
+                    && !existing.password.isEmpty()) {
                     p.password = existing.password;
                 }
-                if (p.saveKeyPassphrase && m_keyPassEdit->text().isEmpty()
+                if (method != 0 && p.saveKeyPassphrase && m_keyPassEdit->text().isEmpty()
                     && !existing.keyPassphrase.isEmpty()) {
                     p.keyPassphrase = existing.keyPassphrase;
                 }
@@ -2530,21 +2707,28 @@ void DashboardPage::connectFromForm()
     const QString host = m_hostEdit->text().trimmed();
     const QString user = m_userEdit->text().trimmed();
     if (host.isEmpty() || user.isEmpty()) {
-        return;
-    }
-    const bool hasKey = !m_keyPathEdit->text().trimmed().isEmpty()
-        || !m_keyringCombo->currentData().toString().isEmpty();
-    if (m_passEdit->text().isEmpty() && !hasKey) {
-        m_hint->setText(QStringLiteral("provide a password or a private key"));
+        m_hint->setText(QStringLiteral("host and user required"));
         return;
     }
 
-    SessionProfile p = makeProfile(host, m_portSpin->value(), user, m_passEdit->text(), m_nameEdit->text());
+    const int method = m_authMethodCombo ? m_authMethodCombo->currentData().toInt() : 0;
+    if (method == 0 && m_passEdit->text().isEmpty() && m_editingId.isEmpty()) {
+        m_hint->setText(QStringLiteral("enter a password"));
+        return;
+    }
+    if (method == 1 && m_keyringCombo->currentData().toString().isEmpty()) {
+        m_hint->setText(QStringLiteral("import or select a keyring key"));
+        return;
+    }
+    if (method == 2 && m_keyPathEdit->text().trimmed().isEmpty()) {
+        m_hint->setText(QStringLiteral("choose a private key file"));
+        return;
+    }
+
+    SessionProfile p = makeProfile(host, m_portSpin->value(), user, QString(), m_nameEdit->text());
     fillProfileFromForm(&p);
-    p.password = m_passEdit->text();
-    p.keyPassphrase = m_keyPassEdit->text();
 
-    if (p.password.isEmpty() && !m_editingId.isEmpty()) {
+    if (method == 0 && p.password.isEmpty() && !m_editingId.isEmpty()) {
         for (const SessionProfile& existing : m_profiles) {
             if (existing.id == m_editingId && !existing.password.isEmpty()) {
                 p.password = existing.password;
@@ -2552,7 +2736,7 @@ void DashboardPage::connectFromForm()
             }
         }
     }
-    if (p.keyPassphrase.isEmpty() && !m_editingId.isEmpty()) {
+    if (method != 0 && p.keyPassphrase.isEmpty() && !m_editingId.isEmpty()) {
         for (const SessionProfile& existing : m_profiles) {
             if (existing.id == m_editingId && !existing.keyPassphrase.isEmpty()) {
                 p.keyPassphrase = existing.keyPassphrase;
@@ -2560,7 +2744,12 @@ void DashboardPage::connectFromForm()
             }
         }
     }
-    emit openProfile(p);
+
+    if (p.isSftpOnly()) {
+        emit openSftpForProfile(p);
+    } else {
+        emit openProfile(p);
+    }
 }
 
 void DashboardPage::loadSettingsUi()

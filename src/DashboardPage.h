@@ -2,6 +2,8 @@
 
 #include "core/SessionProfile.h"
 #include "core/sync/SyncController.h"
+#include "core/addons/AddonHost.h"
+#include "core/addons/AddonStore.h"
 
 #include <QColor>
 #include <QHash>
@@ -27,6 +29,7 @@ class QComboBox;
 class QSlider;
 class QAbstractButton;
 class QKeySequenceEdit;
+class QVBoxLayout;
 
 class DashboardPage : public QWidget
 {
@@ -68,6 +71,7 @@ private:
         Sftp,
         Shortcuts,
         Sync,
+        Addons,
         About
     };
 
@@ -255,6 +259,16 @@ private:
     // Debounce support
     QTimer* m_syncSaveDebounce = nullptr;
 
+    // ---- Addons (marketplace; plugin load comes later) ----------------------
+    AddonStore* m_addonStore = nullptr;
+    AddonHost* m_addonHost = nullptr;
+    QLineEdit* m_addonsRepoEdit = nullptr;
+    QPushButton* m_addonsRefreshBtn = nullptr;
+    QLabel* m_addonsAbiLabel = nullptr;
+    QLabel* m_addonsStatus = nullptr;
+    QWidget* m_addonsListHost = nullptr;
+    QVBoxLayout* m_addonsListLay = nullptr;
+
     void syncCreateSetup();
     void syncJoinFromInput();
     void syncDisable();
@@ -266,6 +280,9 @@ private:
     void syncOnStatus(const QString& message);
     void syncOnError(const QString& message);
     void syncOnDataUpdated();
+
+    void rebuildAddonsList();
+    void persistAddonsRepoUrl();
 
     void persistSyncLive();
     void applyStoredSyncState();

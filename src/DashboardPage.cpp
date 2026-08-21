@@ -8,6 +8,10 @@
 #include "core/sync/SyncController.h"
 #include "core/sync/SyncKey.h"
 #include "core/sync/SyncPayload.h"
+#include "core/addons/AddonConfig.h"
+#include "core/addons/AddonHost.h"
+#include "core/addons/AddonStore.h"
+#include "core/addons/AddonTypes.h"
 #include "core/VaultManager.h"
 #include "ui/Motion.h"
 
@@ -44,6 +48,7 @@
 #include <QPlainTextEdit>
 #include <QPushButton>
 #include <QScrollArea>
+#include <QSet>
 #include <QSettings>
 #include <QSizePolicy>
 #include <QSpinBox>
@@ -356,7 +361,8 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_settingsNav->addItems({QStringLiteral("General"), QStringLiteral("Appearance"),
                              QStringLiteral("Performance"), QStringLiteral("SSH / Sessions"),
                              QStringLiteral("SFTP"), QStringLiteral("Shortcuts"),
-                             QStringLiteral("Sync"), QStringLiteral("About")});
+                             QStringLiteral("Sync"), QStringLiteral("Addons"),
+                             QStringLiteral("About")});
     m_settingsNav->setCurrentRow(0);
 
     m_settingsStack = new QStackedWidget(setBody);
@@ -965,6 +971,83 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         }
     }
 
+    // Addons (downloadable; plugin binaries not loaded yet)
+    {
+        QWidget* sec = buildSettingsSection(QStringLiteral("Addons"), m_settingsStack);
+        auto* aLay = qobject_cast<QVBoxLayout*>(sec->layout());
+
+        auto* intro = new QLabel(
+            QStringLiteral(
+                "Browse optional addons from a remote catalog. Installed addons are stored on disk "
+                "and use no RAM until plugin loading is enabled in a future release."),
+            sec);
+        intro->setObjectName(QStringLiteral("dashHint"));
+        intro->setWordWrap(true);
+        aLay->addWidget(intro);
+        aLay->addSpacing(6);
+
+        m_addonsAbiLabel = new QLabel(sec);
+        m_addonsAbiLabel->setObjectName(QStringLiteral("dashHint"));
+        m_addonsAbiLabel->setText(
+            QStringLiteral("This build ABI: %1").arg(clientoshAddonAbi()));
+        aLay->addWidget(m_addonsAbiLabel);
+
+        m_addonsRepoEdit = new QLineEdit(sec);
+        m_addonsRepoEdit->setPlaceholderText(AddonConfig::defaultRepositoryUrl());
+        m_addonsRepoEdit->setText(AddonConfig::repositoryUrl());
+        addSettingsField(sec, QStringLiteral("Catalog URL (index.json)"), m_addonsRepoEdit);
+
+        auto* repoRow = new QWidget(sec);
+        auto* repoLay = new QHBoxLayout(repoRow);
+        repoLay->setContentsMargins(0, 0, 0, 0);
+        repoLay->setSpacing(8);
+        m_addonsRefreshBtn = new QPushButton(QStringLiteral("Refresh catalog"), repoRow);
+        m_addonsRefreshBtn->setObjectName(QStringLiteral("dashPrimary"));
+        m_addonsRefreshBtn->setFocusPolicy(Qt::NoFocus);
+        m_addonsRefreshBtn->setCursor(Qt::PointingHandCursor);
+        auto* openFolderBtn = new QPushButton(QStringLiteral("Open folder"), repoRow);
+        openFolderBtn->setObjectName(QStringLiteral("dashButton"));
+        openFolderBtn->setFocusPolicy(Qt::NoFocus);
+        openFolderBtn->setCursor(Qt::PointingHandCursor);
+        repoLay->addWidget(m_addonsRefreshBtn);
+        repoLay->addWidget(openFolderBtn);
+        repoLay->addStretch(1);
+        aLay->addWidget(repoRow);
+
+        m_addonsStatus = new QLabel(QStringLiteral("Refresh the catalog to see available addons."), sec);
+        m_addonsStatus->setObjectName(QStringLiteral("dashHint"));
+        m_addonsStatus->setWordWrap(true);
+        aLay->addWidget(m_addonsStatus);
+        aLay->addSpacing(8);
+
+        auto* listTitle = new QLabel(QStringLiteral("Available"), sec);
+        listTitle->setObjectName(QStringLiteral("settingsSubsection"));
+        aLay->addWidget(listTitle);
+
+        m_addonsListHost = new QWidget(sec);
+        m_addonsListLay = new QVBoxLayout(m_addonsListHost);
+        m_addonsListLay->setContentsMargins(0, 0, 0, 0);
+        m_addonsListLay->setSpacing(8);
+        aLay->addWidget(m_addonsListHost);
+        aLay->addStretch(1);
+
+        connect(m_addonsRepoEdit, &QLineEdit::editingFinished, this, [this]() {
+            persistAddonsRepoUrl();
+        });
+        connect(m_addonsRefreshBtn, &QPushButton::clicked, this, [this]() {
+            persistAddonsRepoUrl();
+            if (m_addonStore) {
+                m_addonStore->refreshCatalog();
+            }
+        });
+        connect(openFolderBtn, &QPushButton::clicked, this, []() {
+            QDir().mkpath(AddonStore::addonsRoot());
+            QDesktopServices::openUrl(QUrl::fromLocalFile(AddonStore::addonsRoot()));
+        });
+
+        makeScrollPage(sec);
+    }
+
     // About
     {
         QWidget* sec = buildSettingsSection(QStringLiteral("About"), m_settingsStack);
@@ -1375,6 +1458,40 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
 
     applyStoredSyncState();
     syncRefreshUiFromSyncState();
+
+    // ---- Addons marketplace (install files only; no plugin load yet) ----
+    m_addonStore = new AddonStore(this);
+    m_addonHost = new AddonHost(m_addonStore, this);
+    connect(m_addonStore, &AddonStore::catalogUpdated, this, &DashboardPage::rebuildAddonsList);
+    connect(m_addonStore, &AddonStore::statusMessage, this, [this](const QString& msg) {
+        if (m_addonsStatus) {
+            m_addonsStatus->setText(msg);
+        }
+        appendLog(QStringLiteral("addons: %1").arg(msg));
+    });
+    connect(m_addonStore, &AddonStore::errorOccurred, this, [this](const QString& err) {
+        if (m_addonsStatus) {
+            m_addonsStatus->setText(err);
+        }
+        appendLog(QStringLiteral("addons: %1").arg(err));
+    });
+    connect(m_addonStore, &AddonStore::installFinished, this,
+            [this](const QString& id, bool ok, const QString& err) {
+                if (!ok && m_addonsStatus) {
+                    m_addonsStatus->setText(err);
+                }
+                Q_UNUSED(id);
+                rebuildAddonsList();
+            });
+    connect(m_addonStore, &AddonStore::removeFinished, this,
+            [this](const QString&, bool ok, const QString& err) {
+                if (!ok && m_addonsStatus) {
+                    m_addonsStatus->setText(err);
+                }
+                rebuildAddonsList();
+            });
+    connect(m_addonHost, &AddonHost::installedChanged, this, &DashboardPage::rebuildAddonsList);
+    rebuildAddonsList();
 
     connect(clearLogs, &QPushButton::clicked, this, [this]() { m_logsView->clear(); });
     connect(m_passEdit, &QLineEdit::returnPressed, this, &DashboardPage::connectFromForm);
@@ -2961,6 +3078,145 @@ void DashboardPage::saveSettingsUi()
     m_hint->setText(QStringLiteral("settings saved"));
     appendLog(QStringLiteral("settings saved"));
     showHome();
+}
+
+// ---- Addons marketplace -------------------------------------------------
+
+void DashboardPage::persistAddonsRepoUrl()
+{
+    if (!m_addonsRepoEdit) {
+        return;
+    }
+    AddonConfig::setRepositoryUrl(m_addonsRepoEdit->text().trimmed());
+}
+
+void DashboardPage::rebuildAddonsList()
+{
+    if (!m_addonsListLay) {
+        return;
+    }
+    while (QLayoutItem* item = m_addonsListLay->takeAt(0)) {
+        if (QWidget* w = item->widget()) {
+            w->deleteLater();
+        }
+        delete item;
+    }
+
+    QHash<QString, AddonInstallRecord> installedById;
+    if (m_addonStore) {
+        for (const AddonInstallRecord& r : m_addonStore->installed()) {
+            installedById.insert(r.id, r);
+        }
+    }
+
+    QVector<AddonCatalogEntry> catalog;
+    if (m_addonStore && m_addonStore->hasCatalog()) {
+        catalog = m_addonStore->catalog().addons;
+    }
+
+    // Also show installed addons that are no longer in the catalog.
+    QSet<QString> seen;
+    auto addRow = [&](const QString& id, const QString& name, const QString& version,
+                      const QString& description, const QString& author, bool compatible,
+                      bool fromCatalog) {
+        seen.insert(id);
+        const bool installed = installedById.contains(id);
+        const AddonInstallRecord rec = installedById.value(id);
+        const bool enabled = installed && AddonConfig::isEnabled(id);
+
+        auto* row = new QWidget(m_addonsListHost);
+        auto* lay = new QVBoxLayout(row);
+        lay->setContentsMargins(8, 8, 8, 8);
+        lay->setSpacing(4);
+
+        auto* title = new QLabel(name.isEmpty() ? id : name, row);
+        title->setObjectName(QStringLiteral("settingsSubsection"));
+        QString meta = version;
+        if (!author.isEmpty()) {
+            meta += QStringLiteral(" · %1").arg(author);
+        }
+        if (installed) {
+            meta += QStringLiteral(" · installed");
+            if (!rec.version.isEmpty() && rec.version != version && fromCatalog) {
+                meta += QStringLiteral(" (local %1)").arg(rec.version);
+            }
+        } else if (!compatible) {
+            meta += QStringLiteral(" · not available for this platform");
+        }
+        auto* metaLab = new QLabel(meta, row);
+        metaLab->setObjectName(QStringLiteral("dashHint"));
+
+        auto* desc = new QLabel(description.isEmpty() ? QStringLiteral("No description.") : description,
+                                row);
+        desc->setObjectName(QStringLiteral("dashHint"));
+        desc->setWordWrap(true);
+
+        auto* actions = new QHBoxLayout;
+        actions->setContentsMargins(0, 0, 0, 0);
+        actions->setSpacing(6);
+
+        if (installed) {
+            auto* enable = new QCheckBox(QStringLiteral("Enabled"), row);
+            enable->setChecked(enabled);
+            enable->setFocusPolicy(Qt::NoFocus);
+            connect(enable, &QCheckBox::toggled, this, [this, id](bool on) {
+                if (m_addonHost) {
+                    m_addonHost->setAddonEnabled(id, on);
+                }
+            });
+            actions->addWidget(enable);
+
+            auto* remove = new QPushButton(QStringLiteral("Remove"), row);
+            remove->setObjectName(QStringLiteral("dashButton"));
+            remove->setFocusPolicy(Qt::NoFocus);
+            remove->setCursor(Qt::PointingHandCursor);
+            connect(remove, &QPushButton::clicked, this, [this, id]() {
+                if (m_addonStore) {
+                    m_addonStore->removeAddon(id);
+                }
+            });
+            actions->addWidget(remove);
+        } else {
+            auto* install = new QPushButton(QStringLiteral("Install"), row);
+            install->setObjectName(QStringLiteral("dashPrimary"));
+            install->setFocusPolicy(Qt::NoFocus);
+            install->setCursor(Qt::PointingHandCursor);
+            install->setEnabled(compatible && m_addonStore && !m_addonStore->busy());
+            connect(install, &QPushButton::clicked, this, [this, id]() {
+                if (m_addonStore) {
+                    m_addonStore->installAddon(id);
+                }
+            });
+            actions->addWidget(install);
+        }
+        actions->addStretch(1);
+
+        lay->addWidget(title);
+        lay->addWidget(metaLab);
+        lay->addWidget(desc);
+        lay->addLayout(actions);
+        m_addonsListLay->addWidget(row);
+    };
+
+    for (const AddonCatalogEntry& e : catalog) {
+        addRow(e.id, e.name, e.version, e.description, e.author, e.hasCompatibleArtifact(), true);
+    }
+    for (auto it = installedById.cbegin(); it != installedById.cend(); ++it) {
+        if (seen.contains(it.key())) {
+            continue;
+        }
+        const AddonInstallRecord& r = it.value();
+        addRow(r.id, r.name, r.version, r.description, r.author, true, false);
+    }
+
+    if (m_addonsListLay->count() == 0) {
+        auto* empty = new QLabel(
+            QStringLiteral("No addons to show. Refresh the catalog or install from a valid index.json."),
+            m_addonsListHost);
+        empty->setObjectName(QStringLiteral("dashHint"));
+        empty->setWordWrap(true);
+        m_addonsListLay->addWidget(empty);
+    }
 }
 
 // ---- Sync (GitHub Gist, end-to-end encrypted) ----------------------------

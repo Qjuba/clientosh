@@ -158,6 +158,14 @@ add_executable(clientosh
     src/core/sync/SyncController.cpp
     src/core/sync/SyncConfig.h
     src/core/sync/SyncConfig.cpp
+    src/core/addons/AddonTypes.h
+    src/core/addons/AddonTypes.cpp
+    src/core/addons/AddonConfig.h
+    src/core/addons/AddonConfig.cpp
+    src/core/addons/AddonStore.h
+    src/core/addons/AddonStore.cpp
+    src/core/addons/AddonHost.h
+    src/core/addons/AddonHost.cpp
     src/PanelTypes.h
     src/DropOverlay.h
     src/DropOverlay.cpp

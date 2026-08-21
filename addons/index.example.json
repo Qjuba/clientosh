@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "updated": "2026-08-21",
+  "notes": "Publish this file as index.json in a clientosh-addons repository. Each artifact.abi must match clientoshAddonAbi() for the target OS.",
+  "addons": [
+    {
+      "id": "example-hello",
+      "name": "Example Hello",
+      "description": "Placeholder catalog entry. Replace url/sha256 with a real build when plugin binaries exist. Install still downloads and verifies the file.",
+      "version": "0.1.0",
+      "author": "clientosh",
+      "homepage": "https://github.com/hdmain/clientosh-addons",
+      "artifacts": [
+        {
+          "abi": "qt6.9-win64-mingw",
+          "url": "https://example.com/clientosh-addons/example-hello-0.1.0-win64.dll",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        {
+          "abi": "qt6.9-linux-x64",
+          "url": "https://example.com/clientosh-addons/example-hello-0.1.0-linux.so",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        },
+        {
+          "abi": "qt6.9-macos",
+          "url": "https://example.com/clientosh-addons/example-hello-0.1.0-macos.dylib",
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "size": 0
+        }
+      ]
+    }
+  ]
+}

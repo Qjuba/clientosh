@@ -461,11 +461,32 @@ Contributions are welcome! Please:
 3. Keep builds clean on **Linux, macOS, and Windows**.
 4. Open a **pull request** against `main`.
 
-The **CI** workflow builds and smoke-tests the project on Ubuntu, macOS, and Windows (MSYS2) for every push and PR. The **Release** workflow produces `.deb`, `.rpm`, `.AppImage`, `.tar.gz`, `.pkg.tar.zst`, Windows installers, and a macOS `.dmg` whenever you push a `v*` tag - plus a `CHECKSUMS.txt`.
+The **CI** workflow builds and smoke-tests the project on Ubuntu, macOS, and Windows (MSYS2) for every push and PR. The **Beta** workflow publishes a rolling Windows installer and `.deb` on every push to `main` (see [Download beta versions](#-download-beta-versions) below). The **Release** workflow produces `.deb`, `.rpm`, `.AppImage`, `.tar.gz`, `.pkg.tar.zst`, Windows installers, and a macOS `.dmg` whenever you push a `v*` tag - plus a `CHECKSUMS.txt`.
 
 > 🔐 **Security note:** host-key checking is intentionally disabled to keep the local client raw and friction-free. Prefer running clientosh on **trusted networks** until key verification (the top roadmap item) lands.
 
 > 💡 **Pro tip:** because the app version lives only in `project(VERSION ...)` at the top of `CMakeLists.txt`, bump it **once** and every artifact - the About tab, Windows RC, and both installers - follows automatically.
+
+<br/>
+
+---
+
+## ⬇️ &nbsp;Download beta versions
+
+Pre-release builds from the latest commit on `main`. The [beta release](https://github.com/hdmain/clientosh/releases/tag/beta) is updated automatically on every push.
+
+| Platform | Download |
+|---|---|
+| **Windows** (64-bit installer) | [clientosh-beta-win64-setup.exe](https://github.com/hdmain/clientosh/releases/download/beta/clientosh-beta-win64-setup.exe) |
+| **Linux** (Debian / Ubuntu `.deb`) | [clientosh-beta-amd64.deb](https://github.com/hdmain/clientosh/releases/download/beta/clientosh-beta-amd64.deb) |
+| **Checksums** | [CHECKSUMS-beta.txt](https://github.com/hdmain/clientosh/releases/download/beta/CHECKSUMS-beta.txt) |
+
+```bash
+# Linux
+sudo apt install ./clientosh-beta-amd64.deb
+```
+
+For stable, tagged releases see [Releases](https://github.com/hdmain/clientosh/releases).
 
 <br/>
 

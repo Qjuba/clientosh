@@ -14,7 +14,7 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # Windows: Inno Setup .exe installer + portable .zip + raw .exe
+  # Windows: Inno Setup .exe installer + portable .zip
   # ---------------------------------------------------------------------------
   build-windows:
     name: Windows (Inno installer .exe + portable .zip)
@@ -103,16 +103,16 @@ jobs:
       - name: Build Inno Setup installer (.exe)
         run: |
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" build-win/installer/clientosh_installer.iss
-          ls -la clientosh-*-setup.exe
+          ls -la clientosh-*-win64-setup.exe
 
       - name: Locate installer filename
         # Locate the actual .exe produced by ISCC instead of guessing its name
         # from REF_NAME. The Inno template names the output after CMake's version
-        # (clientosh-<VERSION>-setup.exe, no "v" prefix), which may differ from the
-        # git tag. Finding the real file keeps the upload correct either way.
+        # (clientosh-<VERSION>-win64-setup.exe, no "v" prefix), which may differ
+        # from the git tag. Finding the real file keeps the upload correct either way.
         id: setup
         run: |
-          file=$(ls clientosh-*-setup.exe 2>/dev/null | grep -i setup | head -n 1)
+          file=$(ls clientosh-*-win64-setup.exe 2>/dev/null | grep -i setup | head -n 1)
           echo "path=$file" >> "$GITHUB_OUTPUT"
           echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
 
@@ -141,23 +141,13 @@ jobs:
           tag: ${{ github.ref }}
           overwrite: true
 
-      - name: Upload raw .exe
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: build-win/clientosh.exe
-          tag: ${{ github.ref }}
-          asset_name: clientosh-${{ env.REF_NAME }}-win64.exe
-          overwrite: true
-
       - name: Upload build artifacts (for checksums job)
         uses: actions/upload-artifact@v4
         with:
           name: windows-assets
           path: |
-            clientosh-*-setup.exe
+            clientosh-*-win64-setup.exe
             clientosh-${{ env.REF_NAME }}-win64-portable.zip
-            build-win/clientosh.exe
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------

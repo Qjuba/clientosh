@@ -1,7 +1,7 @@
 ; ============================================================
 ;  clientosh – Inno Setup Script (generated from the .in template)
 ;  Version comes from CMakeLists.txt — do not edit version here.
-;  Output: clientosh-@APP_VERSION@-setup.exe
+;  Output: clientosh-@APP_VERSION@-win64-setup.exe
 ; ============================================================
 
 #define AppName      "clientosh"
@@ -24,7 +24,7 @@ DefaultGroupName={#AppName}
 AllowNoIcons=yes
 LicenseFile=@LICENSE_DIR@
 OutputDir=@OUT_DIR@
-OutputBaseFilename=clientosh-{#AppVersion}-setup
+OutputBaseFilename=clientosh-{#AppVersion}-win64-setup
 SetupIconFile=@ICO_DIR@
 UninstallDisplayIcon={app}\clientosh.ico
 UninstallDisplayName={#AppName} {#AppVersion}

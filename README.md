@@ -245,7 +245,7 @@ cmake --build  --preset windows-qt692-mingw
 | Platform | Artifacts |
 |---|---|
 | **Linux** | `.deb`, `.rpm`, `.AppImage`, portable `.tar.gz` |
-| **Windows** | Inno Setup `.exe`, portable `.zip`, raw `.exe` |
+| **Windows** | Inno Setup `.exe`, portable `.zip` |
 | **Arch** | `.pkg.tar.zst` |
 | **macOS** | `.dmg` |
 

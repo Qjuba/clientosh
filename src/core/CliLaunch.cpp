@@ -154,6 +154,10 @@ void addStandardOptions(QCommandLineParser& parser)
 
 void configureParser(QCommandLineParser& parser)
 {
+    // Keep compatibility with the documented `-name title` spelling. Without
+    // this mode Qt treats `-name` as short option `-n` with the value `ame`.
+    parser.setSingleDashWordOptionMode(QCommandLineParser::ParseAsLongOptions);
+
     parser.setApplicationDescription(
         QStringLiteral(
             "clientosh - SSH, SFTP, Telnet, and serial client\n"

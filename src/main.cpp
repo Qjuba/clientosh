@@ -159,6 +159,9 @@ void focusMainWindow(MainWindow& window)
 
 int main(int argc, char* argv[])
 {
+    // File-backed settings (INI) — must run before any QSettings() usage.
+    AppSettings::configureFileStorage();
+
 #ifdef Q_OS_WIN
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);

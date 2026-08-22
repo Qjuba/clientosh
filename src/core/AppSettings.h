@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QColor>
+#include <QCoreApplication>
 #include <QHash>
 #include <QKeySequence>
 #include <QSettings>
@@ -10,6 +11,96 @@
 
 /** Central QSettings keys for clientosh preferences. */
 namespace AppSettings {
+
+/**
+ * Force all QSettings() usage onto an INI file under the app config dir
+ * (e.g. %APPDATA%/clientosh/clientosh.ini on Windows) instead of the
+ * Windows registry. Safe to call before QApplication exists.
+ *
+ * Migrates non-secret NativeFormat settings once when the INI is empty.
+ * Always strips leftover plaintext passwords / passphrases from both stores —
+ * secrets belong only in the encrypted vault (dbvault), never in INI/registry.
+ */
+inline bool isSecretSettingsKey(const QString& key)
+{
+    const QString lower = key.toLower();
+    return lower == QLatin1String("password")
+        || lower == QLatin1String("keypassphrase")
+        || lower.endsWith(QLatin1String("/password"))
+        || lower.endsWith(QLatin1String("\\password"))
+        || lower.endsWith(QLatin1String("/keypassphrase"))
+        || lower.endsWith(QLatin1String("\\keypassphrase"));
+}
+
+inline void purgePlaintextSecrets(QSettings& s)
+{
+    const QStringList keys = s.allKeys();
+    bool changed = false;
+    for (const QString& key : keys) {
+        if (!isSecretSettingsKey(key)) {
+            continue;
+        }
+        s.remove(key);
+        changed = true;
+    }
+    // Legacy profile array must not live beside the vault — wipe the whole group.
+    if (s.childGroups().contains(QLatin1String("profiles"))
+        || keys.contains(QLatin1String("profiles/size"))
+        || !s.value(QLatin1String("profiles/size")).isNull()) {
+        s.beginGroup(QLatin1String("profiles"));
+        s.remove(QString());
+        s.endGroup();
+        s.remove(QLatin1String("profiles"));
+        changed = true;
+    }
+    if (changed) {
+        s.sync();
+    }
+}
+
+inline void purgeAllPlaintextSecrets()
+{
+    QSettings ini(QSettings::IniFormat, QSettings::UserScope,
+                  QStringLiteral("clientosh"), QStringLiteral("clientosh"));
+    purgePlaintextSecrets(ini);
+
+    QSettings native(QSettings::NativeFormat, QSettings::UserScope,
+                     QStringLiteral("clientosh"), QStringLiteral("clientosh"));
+    purgePlaintextSecrets(native);
+}
+
+inline void configureFileStorage()
+{
+    QCoreApplication::setOrganizationName(QStringLiteral("clientosh"));
+    QCoreApplication::setApplicationName(QStringLiteral("clientosh"));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+
+    static bool migrated = false;
+    if (migrated) {
+        return;
+    }
+    migrated = true;
+
+    QSettings ini(QSettings::IniFormat, QSettings::UserScope,
+                  QStringLiteral("clientosh"), QStringLiteral("clientosh"));
+    if (!ini.allKeys().isEmpty()) {
+        return;
+    }
+
+    QSettings native(QSettings::NativeFormat, QSettings::UserScope,
+                     QStringLiteral("clientosh"), QStringLiteral("clientosh"));
+    const QStringList keys = native.allKeys();
+    for (const QString& key : keys) {
+        // Never copy secrets or the legacy profiles array into the INI —
+        // profiles/secrets are migrated into the encrypted vault by loadProfiles().
+        if (isSecretSettingsKey(key)
+            || key.startsWith(QLatin1String("profiles/"))) {
+            continue;
+        }
+        ini.setValue(key, native.value(key));
+    }
+    ini.sync();
+}
 
 inline constexpr const char* kSavePasswordDefault = "settings/savePasswordDefault";
 inline constexpr const char* kHideDotfiles = "settings/hideDotfiles";
@@ -254,14 +345,29 @@ inline bool highlightAddresses()
     return QSettings().value(QLatin1String(kHighlightAddresses), true).toBool();
 }
 
+inline void setHighlightAddresses(bool enabled)
+{
+    setValueSync(kHighlightAddresses, enabled);
+}
+
 inline bool highlightLogKeywords()
 {
     return QSettings().value(QLatin1String(kHighlightLogKeywords), true).toBool();
 }
 
+inline void setHighlightLogKeywords(bool enabled)
+{
+    setValueSync(kHighlightLogKeywords, enabled);
+}
+
 inline bool highlightCiscoCli()
 {
     return QSettings().value(QLatin1String(kHighlightCiscoCli), false).toBool();
+}
+
+inline void setHighlightCiscoCli(bool enabled)
+{
+    setValueSync(kHighlightCiscoCli, enabled);
 }
 
 inline bool ctrlScrollFontZoom()

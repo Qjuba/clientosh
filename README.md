@@ -423,7 +423,7 @@ For Telnet, username is optional (you can type credentials manually in the termi
 
 ## ⚙️ &nbsp;Configuration
 
-Settings are persisted with Qt's `QSettings` (registry on Windows, INI/plist elsewhere).
+Settings are persisted as an INI file via Qt's `QSettings` (e.g. `%APPDATA%/clientosh/clientosh.ini` on Windows, `~/.config/clientosh/clientosh.ini` on Linux). **Passwords and key passphrases are never stored there** — they live only in the encrypted vault (`dbvault`). Any leftover legacy plaintext profile entries are migrated into the vault and wiped on startup.
 
 | Key | Type | Default | Description |
 |---|---|---|---|

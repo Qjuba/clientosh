@@ -7,6 +7,7 @@
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QSettings>
 #include <QUuid>
 
 #include <cstdio>
@@ -344,8 +345,10 @@ int runHeadlessPhase(int argc, char* argv[], Request* outRequest, bool* outLaunc
     const bool wantVersion = argvHasVersion(argc, argv);
 
     QCoreApplication core(argc, argv);
+    core.setOrganizationName(QStringLiteral("clientosh"));
     core.setApplicationName(QStringLiteral("clientosh"));
     core.setApplicationVersion(QStringLiteral(CLIENTOSH_VERSION));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
 
     QCommandLineParser parser;
     configureParser(parser);

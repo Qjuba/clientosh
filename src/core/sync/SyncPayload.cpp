@@ -22,8 +22,7 @@ QJsonObject profileToJsonFull(const SessionProfile& p)
     o.insert(QStringLiteral("privateKeyId"), p.privateKeyId);
     o.insert(QStringLiteral("keyPassphrase"), p.keyPassphrase);
     o.insert(QStringLiteral("saveKeyPassphrase"), p.saveKeyPassphrase);
-    const QString mode = p.isSftpOnly() ? QStringLiteral("sftp")
-                                        : QStringLiteral("ssh");
+    const QString mode = connectionModeToString(p.connectionMode);
     o.insert(QStringLiteral("connectionMode"), mode);
     o.insert(QStringLiteral("system"), p.system);
     return o;
@@ -44,9 +43,10 @@ SessionProfile profileFromJsonFull(const QJsonObject& o)
     p.keyPassphrase = o.value(QStringLiteral("keyPassphrase")).toString();
     p.saveKeyPassphrase = o.value(QStringLiteral("saveKeyPassphrase")).toBool(false);
     const QString mode = o.value(QStringLiteral("connectionMode")).toString();
-    p.connectionMode = mode.compare(QLatin1String("sftp"), Qt::CaseInsensitive) == 0
-        ? ConnectionMode::SftpOnly
-        : ConnectionMode::Ssh;
+    p.connectionMode = connectionModeFromString(mode);
+    if (p.port <= 0) {
+        p.port = p.isTelnet() ? 23 : 22;
+    }
     p.system = o.value(QStringLiteral("system")).toString();
     if (p.id.isEmpty()) {
         p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);

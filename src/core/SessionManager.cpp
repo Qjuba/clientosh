@@ -15,9 +15,9 @@ SessionManager::~SessionManager()
     }
 
     // App is shutting down: wait for worker threads so QThread isn't destroyed mid-run.
-    const QVector<SshSession*> retiring = m_retiring;
-    m_retiring.clear();
-    for (SshSession* ssh : retiring) {
+    const QVector<SshSession*> retiringSsh = m_retiringSsh;
+    m_retiringSsh.clear();
+    for (SshSession* ssh : retiringSsh) {
         if (!ssh) {
             continue;
         }
@@ -25,6 +25,39 @@ SessionManager::~SessionManager()
         ssh->wait(8000);
         delete ssh;
     }
+
+    const QVector<TelnetSession*> retiringTelnet = m_retiringTelnet;
+    m_retiringTelnet.clear();
+    for (TelnetSession* telnet : retiringTelnet) {
+        if (!telnet) {
+            continue;
+        }
+        telnet->disconnectFromHost();
+        telnet->wait(8000);
+        delete telnet;
+    }
+}
+
+QString SessionManager::connectedLabel(const SessionProfile& profile)
+{
+    if (profile.isSftpOnly()) {
+        return QStringLiteral("connected · SFTP");
+    }
+    if (profile.isTelnet()) {
+        return QStringLiteral("connected · Telnet");
+    }
+    return QStringLiteral("connected · SSH");
+}
+
+QString SessionManager::connectingLabel(const SessionProfile& profile)
+{
+    if (profile.isSftpOnly()) {
+        return QStringLiteral("connecting sftp…");
+    }
+    if (profile.isTelnet()) {
+        return QStringLiteral("connecting telnet…");
+    }
+    return QStringLiteral("connecting…");
 }
 
 SessionManager::LiveSession* SessionManager::session(const QString& id)
@@ -47,10 +80,15 @@ QString SessionManager::createSession(const SessionProfile& profile)
     auto* live = new LiveSession;
     live->id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     live->profile = profile;
-    live->ssh = new SshSession(this);
     live->status = QStringLiteral("preparing…");
 
-    wireSession(live);
+    if (profile.isTelnet()) {
+        live->telnet = new TelnetSession(this);
+        wireTelnetSession(live);
+    } else {
+        live->ssh = new SshSession(this);
+        wireSshSession(live);
+    }
 
     m_sessions.insert(live->id, live);
     m_order.push_back(live->id);
@@ -66,12 +104,25 @@ QString SessionManager::createSession(const SessionProfile& profile)
 void SessionManager::connectSession(const QString& id, int cols, int rows)
 {
     LiveSession* live = session(id);
-    if (!live || !live->ssh) {
+    if (!live) {
         return;
     }
 
     live->status = QStringLiteral("connecting...");
     emit sessionStatusChanged(id, live->status);
+
+    if (live->telnet) {
+        live->telnet->resizePty(cols, rows);
+        live->telnet->connectTo(live->profile.host,
+                                live->profile.port,
+                                live->profile.user,
+                                live->profile.password);
+        return;
+    }
+
+    if (!live->ssh) {
+        return;
+    }
 
     live->ssh->resizePty(cols, rows);
     live->ssh->connectTo(live->profile.host,
@@ -90,15 +141,14 @@ QString SessionManager::openSession(const SessionProfile& profile, int cols, int
     return id;
 }
 
-void SessionManager::wireSession(LiveSession* live)
+void SessionManager::wireSshSession(LiveSession* live)
 {
     const QString id = live->id;
 
     connect(live->ssh, &SshSession::connected, this, [this, id]() {
         if (auto* s = session(id)) {
             s->connected = true;
-            s->status = s->profile.isSftpOnly() ? QStringLiteral("connected · SFTP")
-                                                : QStringLiteral("connected · SSH");
+            s->status = connectedLabel(s->profile);
             emit sessionConnectionChanged(id, true);
             emit sessionStatusChanged(id, s->status);
         }
@@ -144,11 +194,65 @@ void SessionManager::wireSession(LiveSession* live)
         if (auto* s = session(id)) {
             QString sanitized = status;
             if (status.startsWith(QLatin1String("connected "))) {
-                sanitized = s->profile.isSftpOnly() ? QStringLiteral("connected · SFTP")
-                                                    : QStringLiteral("connected · SSH");
+                sanitized = connectedLabel(s->profile);
             } else if (status.startsWith(QLatin1String("connecting to "))) {
-                sanitized = s->profile.isSftpOnly() ? QStringLiteral("connecting sftp…")
-                                                    : QStringLiteral("connecting…");
+                sanitized = connectingLabel(s->profile);
+            }
+            s->status = sanitized;
+            emit sessionStatusChanged(id, sanitized);
+        }
+    });
+}
+
+void SessionManager::wireTelnetSession(LiveSession* live)
+{
+    const QString id = live->id;
+
+    connect(live->telnet, &TelnetSession::connected, this, [this, id]() {
+        if (auto* s = session(id)) {
+            s->connected = true;
+            s->status = connectedLabel(s->profile);
+            emit sessionConnectionChanged(id, true);
+            emit sessionStatusChanged(id, s->status);
+        }
+    });
+
+    connect(live->telnet, &TelnetSession::disconnected, this, [this, id]() {
+        if (auto* s = session(id)) {
+            s->connected = false;
+            s->status = QStringLiteral("disconnected");
+            emit sessionConnectionChanged(id, false);
+            emit sessionStatusChanged(id, s->status);
+            emit sessionDataReceived(id, QByteArray("\r\n[session closed]\r\n"));
+        }
+    });
+
+    connect(live->telnet, &TelnetSession::dataReceived, this, [this, id](const QByteArray& data) {
+        if (session(id)) {
+            emit sessionDataReceived(id, data);
+        }
+    });
+
+    connect(live->telnet, &TelnetSession::errorOccurred, this, [this, id](const QString& message) {
+        if (auto* s = session(id)) {
+            s->connected = false;
+            s->status = message;
+            emit sessionConnectionChanged(id, false);
+            emit sessionStatusChanged(id, s->status);
+            emit sessionError(id, message);
+            emit sessionDataReceived(
+                id,
+                (QStringLiteral("\r\n[error] ") + message + QStringLiteral("\r\n")).toUtf8());
+        }
+    });
+
+    connect(live->telnet, &TelnetSession::statusChanged, this, [this, id](const QString& status) {
+        if (auto* s = session(id)) {
+            QString sanitized = status;
+            if (status.startsWith(QLatin1String("connected "))) {
+                sanitized = connectedLabel(s->profile);
+            } else if (status.startsWith(QLatin1String("connecting to "))) {
+                sanitized = connectingLabel(s->profile);
             }
             s->status = sanitized;
             emit sessionStatusChanged(id, sanitized);
@@ -170,12 +274,34 @@ void SessionManager::retireSsh(SshSession* ssh)
         return;
     }
 
-    m_retiring.push_back(ssh);
+    m_retiringSsh.push_back(ssh);
     connect(ssh, &QThread::finished, this, [this, ssh]() {
-        m_retiring.removeAll(ssh);
+        m_retiringSsh.removeAll(ssh);
         ssh->deleteLater();
     });
     ssh->disconnectFromHost();
+}
+
+void SessionManager::retireTelnet(TelnetSession* telnet)
+{
+    if (!telnet) {
+        return;
+    }
+
+    QObject::disconnect(telnet, nullptr, this, nullptr);
+    telnet->setParent(nullptr);
+
+    if (!telnet->isRunning()) {
+        telnet->deleteLater();
+        return;
+    }
+
+    m_retiringTelnet.push_back(telnet);
+    connect(telnet, &QThread::finished, this, [this, telnet]() {
+        m_retiringTelnet.removeAll(telnet);
+        telnet->deleteLater();
+    });
+    telnet->disconnectFromHost();
 }
 
 void SessionManager::closeSession(const QString& id)
@@ -188,7 +314,9 @@ void SessionManager::closeSession(const QString& id)
     m_detached.remove(id);
 
     retireSsh(live->ssh);
+    retireTelnet(live->telnet);
     live->ssh = nullptr;
+    live->telnet = nullptr;
     delete live;
 
     if (m_activeId == id) {
@@ -203,22 +331,35 @@ void SessionManager::closeSession(const QString& id)
 
 void SessionManager::disconnectSession(const QString& id)
 {
-    if (auto* s = session(id); s && s->ssh) {
-        s->ssh->disconnectFromHost();
+    if (auto* s = session(id); s) {
+        if (s->ssh) {
+            s->ssh->disconnectFromHost();
+        }
+        if (s->telnet) {
+            s->telnet->disconnectFromHost();
+        }
     }
 }
 
 void SessionManager::sendData(const QString& id, const QByteArray& data)
 {
-    if (auto* s = session(id); s && s->ssh) {
-        s->ssh->sendData(data);
+    if (auto* s = session(id); s) {
+        if (s->ssh) {
+            s->ssh->sendData(data);
+        } else if (s->telnet) {
+            s->telnet->sendData(data);
+        }
     }
 }
 
 void SessionManager::resizePty(const QString& id, int cols, int rows)
 {
-    if (auto* s = session(id); s && s->ssh) {
-        s->ssh->resizePty(cols, rows);
+    if (auto* s = session(id); s) {
+        if (s->ssh) {
+            s->ssh->resizePty(cols, rows);
+        } else if (s->telnet) {
+            s->telnet->resizePty(cols, rows);
+        }
     }
 }
 

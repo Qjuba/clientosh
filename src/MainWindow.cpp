@@ -281,6 +281,10 @@ void MainWindow::openProfileThenSftp(const SessionProfile& profile)
         openStandaloneSftp(profile);
         return;
     }
+    if (profile.isTelnet()) {
+        beginTerminalSession(profile, false);
+        return;
+    }
     // SSH + SFTP: open both independently so SFTP never blocks on SSH.
     beginTerminalSession(profile, false);
     openStandaloneSftp(profile);
@@ -523,6 +527,11 @@ void MainWindow::openSftpFromSession(const QString& sessionId)
 {
     auto* live = m_sessions->session(sessionId);
     if (!live) {
+        return;
+    }
+    if (live->profile.isTelnet()) {
+        QMessageBox::information(this, QStringLiteral("sftp"),
+                                 QStringLiteral("SFTP is not available for Telnet sessions."));
         return;
     }
     if (!live->connected) {

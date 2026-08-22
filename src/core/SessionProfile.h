@@ -13,7 +13,8 @@
 
 enum class ConnectionMode {
     Ssh = 0,     // interactive terminal + optional SFTP
-    SftpOnly = 1 // open SFTP file manager only
+    SftpOnly = 1, // open SFTP file manager only
+    Telnet = 2   // raw telnet terminal (no SFTP)
 };
 
 struct SessionProfile {
@@ -47,9 +48,25 @@ struct SessionProfile {
         return connectionMode == ConnectionMode::SftpOnly;
     }
 
+    bool isTelnet() const
+    {
+        return connectionMode == ConnectionMode::Telnet;
+    }
+
+    bool isTerminal() const
+    {
+        return connectionMode == ConnectionMode::Ssh || connectionMode == ConnectionMode::Telnet;
+    }
+
     QString connectionTypeLabel() const
     {
-        return isSftpOnly() ? QStringLiteral("SFTP") : QStringLiteral("SSH");
+        if (isSftpOnly()) {
+            return QStringLiteral("SFTP");
+        }
+        if (isTelnet()) {
+            return QStringLiteral("Telnet");
+        }
+        return QStringLiteral("SSH");
     }
 
     /** Display name without exposing host/IP on the dashboard. */
@@ -78,12 +95,23 @@ inline ConnectionMode connectionModeFromString(const QString& value)
         || value.compare(QLatin1String("sftpOnly"), Qt::CaseInsensitive) == 0) {
         return ConnectionMode::SftpOnly;
     }
+    if (value.compare(QLatin1String("telnet"), Qt::CaseInsensitive) == 0) {
+        return ConnectionMode::Telnet;
+    }
     return ConnectionMode::Ssh;
 }
 
 inline QString connectionModeToString(ConnectionMode mode)
 {
-    return mode == ConnectionMode::SftpOnly ? QStringLiteral("sftp") : QStringLiteral("ssh");
+    switch (mode) {
+    case ConnectionMode::SftpOnly:
+        return QStringLiteral("sftp");
+    case ConnectionMode::Telnet:
+        return QStringLiteral("telnet");
+    case ConnectionMode::Ssh:
+    default:
+        return QStringLiteral("ssh");
+    }
 }
 
 // ---- Legacy QSettings persistence (migration + graceful fallback) -------

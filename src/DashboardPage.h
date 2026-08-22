@@ -118,6 +118,7 @@ private:
     void removeSelectedKeyringKey();
     void onKeyringSelectionChanged(int index);
     void updateAuthMethodUi();
+    void updateConnectionModeUi();
     void fillProfileFromForm(SessionProfile* profile) const;
     int profileIndexById(const QString& id) const;
     QToolButton* makeNavButton(const QString& iconPath, const QString& text, QWidget* parent);

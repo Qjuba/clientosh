@@ -1167,6 +1167,8 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_connectionModeCombo = new QComboBox(formInner);
     m_connectionModeCombo->addItem(QStringLiteral("SSH - terminal + SFTP"),
                                    static_cast<int>(ConnectionMode::Ssh));
+    m_connectionModeCombo->addItem(QStringLiteral("Telnet - terminal"),
+                                   static_cast<int>(ConnectionMode::Telnet));
     m_connectionModeCombo->addItem(QStringLiteral("SFTP only - file manager"),
                                    static_cast<int>(ConnectionMode::SftpOnly));
 
@@ -1342,8 +1344,11 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     connect(m_authMethodCombo, &QComboBox::currentIndexChanged, this, [this](int) {
         updateAuthMethodUi();
     });
+    connect(m_connectionModeCombo, &QComboBox::currentIndexChanged, this, [this](int) {
+        updateConnectionModeUi();
+    });
     reloadKeyringCombo();
-    updateAuthMethodUi();
+    updateConnectionModeUi();
     connect(setSave, &QPushButton::clicked, this, &DashboardPage::saveSettingsUi);
     connect(m_settingsNav, &QListWidget::currentRowChanged, this, &DashboardPage::setSettingsCategory);
     connect(m_settingsAnimations, &QCheckBox::toggled, this, [](bool on) {
@@ -1946,7 +1951,7 @@ void DashboardPage::clearForm()
     if (m_authMethodCombo) {
         m_authMethodCombo->setCurrentIndex(0);
     }
-    updateAuthMethodUi();
+    updateConnectionModeUi();
 }
 
 void DashboardPage::loadProfileIntoForm(const SessionProfile& profile)
@@ -1983,7 +1988,7 @@ void DashboardPage::loadProfileIntoForm(const SessionProfile& profile)
         const int authIdx = m_authMethodCombo->findData(authMethod);
         m_authMethodCombo->setCurrentIndex(authIdx >= 0 ? authIdx : 0);
     }
-    updateAuthMethodUi();
+    updateConnectionModeUi();
 }
 
 void DashboardPage::browsePrivateKey()
@@ -2038,15 +2043,40 @@ void DashboardPage::reloadKeyringCombo()
     m_keyringCombo->blockSignals(false);
 }
 
+void DashboardPage::updateConnectionModeUi()
+{
+    if (!m_connectionModeCombo) {
+        return;
+    }
+    const auto mode = static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt());
+    const bool telnet = (mode == ConnectionMode::Telnet);
+
+    if (telnet && m_portSpin->value() == AppSettings::defaultPort()) {
+        m_portSpin->setValue(23);
+    }
+
+    if (m_authMethodCombo) {
+        m_authMethodCombo->setVisible(!telnet);
+    }
+    if (telnet && m_authMethodCombo) {
+        m_authMethodCombo->setCurrentIndex(0);
+    }
+    updateAuthMethodUi();
+}
+
 void DashboardPage::updateAuthMethodUi()
 {
     if (!m_authMethodCombo) {
         return;
     }
+    const auto mode = m_connectionModeCombo
+        ? static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt())
+        : ConnectionMode::Ssh;
+    const bool telnet = (mode == ConnectionMode::Telnet);
     const int method = m_authMethodCombo->currentData().toInt();
-    const bool password = (method == 0);
-    const bool keyring = (method == 1);
-    const bool keyFile = (method == 2);
+    const bool password = telnet || (method == 0);
+    const bool keyring = !telnet && (method == 1);
+    const bool keyFile = !telnet && (method == 2);
     if (m_authPasswordPanel) {
         m_authPasswordPanel->setVisible(password);
     }
@@ -2079,6 +2109,19 @@ void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
     profile->host = m_hostEdit->text().trimmed();
     profile->port = m_portSpin->value();
     profile->user = m_userEdit->text().trimmed();
+
+    if (profile->isTelnet()) {
+        profile->privateKeyId.clear();
+        profile->privateKeyPath.clear();
+        profile->password = m_passEdit->text();
+        profile->savePassword = m_savePass->isChecked();
+        profile->keyPassphrase.clear();
+        profile->saveKeyPassphrase = false;
+        if (!profile->savePassword) {
+            profile->password.clear();
+        }
+        return;
+    }
 
     const int method = m_authMethodCombo ? m_authMethodCombo->currentData().toInt() : 0;
     if (method == 1) {
@@ -2361,7 +2404,9 @@ void DashboardPage::rebuildSavedList()
             child->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
 
             child->setText(1, p.connectionTypeLabel());
-            child->setForeground(1, p.isSftpOnly() ? QColor(0x9a, 0x9a, 0x9a) : QColor(0x8a, 0x8a, 0x8a));
+            child->setForeground(1, p.isSftpOnly() ? QColor(0x9a, 0x9a, 0x9a)
+                                : p.isTelnet() ? QColor(0xa8, 0x8a, 0x5a)
+                                               : QColor(0x8a, 0x8a, 0x8a));
 
             QString auth = QStringLiteral("password");
             if (p.usesPrivateKey() && p.savePassword) {
@@ -2655,11 +2700,14 @@ void DashboardPage::showHostContextMenu(const QPoint& globalPos, const QString& 
 
     menu.addSeparator();
 
-    auto* ssh = menu.addAction(QStringLiteral("Connect via SSH"));
-    connect(ssh, &QAction::triggered, this, [this, profileId]() { openSavedProfile(profileId); });
+    auto* connectAct = menu.addAction(p.isTelnet() ? QStringLiteral("Connect via Telnet")
+                                                   : QStringLiteral("Connect via SSH"));
+    connect(connectAct, &QAction::triggered, this, [this, profileId]() { openSavedProfile(profileId); });
 
-    auto* sftp = menu.addAction(QStringLiteral("Connect via SFTP"));
-    connect(sftp, &QAction::triggered, this, [this, profileId]() { sftpSavedProfile(profileId); });
+    if (!p.isTelnet()) {
+        auto* sftp = menu.addAction(QStringLiteral("Connect via SFTP"));
+        connect(sftp, &QAction::triggered, this, [this, profileId]() { sftpSavedProfile(profileId); });
+    }
 
     menu.addSeparator();
 
@@ -2828,18 +2876,23 @@ void DashboardPage::connectFromForm()
         return;
     }
 
+    const auto mode = static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt());
+    const bool telnet = (mode == ConnectionMode::Telnet);
+
     const int method = m_authMethodCombo ? m_authMethodCombo->currentData().toInt() : 0;
-    if (method == 0 && m_passEdit->text().isEmpty() && m_editingId.isEmpty()) {
-        m_hint->setText(QStringLiteral("enter a password"));
-        return;
-    }
-    if (method == 1 && m_keyringCombo->currentData().toString().isEmpty()) {
-        m_hint->setText(QStringLiteral("import or select a keyring key"));
-        return;
-    }
-    if (method == 2 && m_keyPathEdit->text().trimmed().isEmpty()) {
-        m_hint->setText(QStringLiteral("choose a private key file"));
-        return;
+    if (!telnet) {
+        if (method == 0 && m_passEdit->text().isEmpty() && m_editingId.isEmpty()) {
+            m_hint->setText(QStringLiteral("enter a password"));
+            return;
+        }
+        if (method == 1 && m_keyringCombo->currentData().toString().isEmpty()) {
+            m_hint->setText(QStringLiteral("import or select a keyring key"));
+            return;
+        }
+        if (method == 2 && m_keyPathEdit->text().trimmed().isEmpty()) {
+            m_hint->setText(QStringLiteral("choose a private key file"));
+            return;
+        }
     }
 
     SessionProfile p = makeProfile(host, m_portSpin->value(), user, QString(), m_nameEdit->text());

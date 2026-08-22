@@ -237,7 +237,8 @@ void TopNavBar::syncStatsProbe()
 {
     const QString id = m_sessions->activeId();
     const auto* live = m_sessions->session(id);
-    const bool wantStats = AppSettings::showServerStats() && live && live->connected;
+    const bool wantStats = AppSettings::showServerStats() && live && live->connected
+                           && !live->profile.isTelnet() && !live->profile.isSftpOnly();
 
     if (!wantStats) {
         if (!m_statsSessionId.isEmpty()) {

@@ -2,6 +2,7 @@
 
 #include "SessionProfile.h"
 #include "SshSession.h"
+#include "TelnetSession.h"
 
 #include <QObject>
 #include <QHash>
@@ -9,7 +10,7 @@
 #include <QVector>
 
 /**
- * Owns live SSH sessions (no widgets). GUI listens to signals and owns terminals.
+ * Owns live terminal sessions (no widgets). GUI listens to signals and owns terminals.
  */
 class SessionManager : public QObject
 {
@@ -20,17 +21,20 @@ public:
         QString id;
         SessionProfile profile;
         SshSession* ssh = nullptr;
+        TelnetSession* telnet = nullptr;
         QString status = QStringLiteral("idle");
         bool connected = false;
+
+        bool usesTelnet() const { return profile.isTelnet(); }
     };
 
     explicit SessionManager(QObject* parent = nullptr);
     ~SessionManager() override;
 
     QString openSession(const SessionProfile& profile, int cols = 80, int rows = 24);
-    /** Create session bookkeeping without starting SSH (UI can layout first). */
+    /** Create session bookkeeping without starting transport (UI can layout first). */
     QString createSession(const SessionProfile& profile);
-    /** Begin SSH connect using the given PTY size. */
+    /** Begin connect using the given terminal size. */
     void connectSession(const QString& id, int cols, int rows);
     void closeSession(const QString& id);
     void disconnectSession(const QString& id);
@@ -61,12 +65,18 @@ signals:
     void sessionError(const QString& id, const QString& message);
 
 private:
-    void wireSession(LiveSession* live);
+    static QString connectedLabel(const SessionProfile& profile);
+    static QString connectingLabel(const SessionProfile& profile);
+
+    void wireSshSession(LiveSession* live);
+    void wireTelnetSession(LiveSession* live);
     void retireSsh(SshSession* ssh);
+    void retireTelnet(TelnetSession* telnet);
 
     QHash<QString, LiveSession*> m_sessions;
     QHash<QString, bool> m_detached;
     QStringList m_order;
     QString m_activeId;
-    QVector<SshSession*> m_retiring;
+    QVector<SshSession*> m_retiringSsh;
+    QVector<TelnetSession*> m_retiringTelnet;
 };

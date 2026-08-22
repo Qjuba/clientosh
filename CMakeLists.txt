@@ -126,6 +126,8 @@ add_executable(clientosh
     src/TerminalWidget.cpp
     src/core/SshSession.h
     src/core/SshSession.cpp
+    src/core/TelnetSession.h
+    src/core/TelnetSession.cpp
     src/core/SessionProfile.h
     src/core/SessionManager.h
     src/core/SessionManager.cpp

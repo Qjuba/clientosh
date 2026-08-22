@@ -64,6 +64,8 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_dashboard, &DashboardPage::closeLiveSession, this, &MainWindow::closeLiveSession);
 
     connect(m_dashboard, &DashboardPage::settingsApplied, this, [this]() {
+        // Theme stylesheet first (may set font-family), then app font so size/family stick.
+        applyTheme();
         qApp->setFont(clientoshUiFont(AppSettings::uiFontSize(), AppSettings::uiFontFamily()));
         for (const QString& id : m_sessions->sessionIds()) {
             if (TerminalWidget* term = findTerminal(id)) {
@@ -78,7 +80,6 @@ MainWindow::MainWindow(QWidget* parent)
             }
         }
         m_topNav->applySettings();
-        applyTheme();
         m_dashboard->refresh();
         rebindShortcuts();
     });
@@ -717,6 +718,19 @@ void MainWindow::applyTheme()
 
     const Palette& p = AppSettings::isLightTheme() ? light : dark;
 
+    // Hardcoded monospace on chrome overwrote the UI font setting. When empty,
+    // omit font-family so QApplication::font() (clientoshUiFont) applies.
+    QString uiFontFamilyCss;
+    {
+        const QString family = AppSettings::uiFontFamily().trimmed();
+        if (!family.isEmpty()) {
+            QString escaped = family;
+            escaped.replace(QLatin1Char('\\'), QLatin1String("\\\\"));
+            escaped.replace(QLatin1Char('"'), QLatin1String("\\\""));
+            uiFontFamilyCss = QStringLiteral("  font-family: \"%1\";").arg(escaped);
+        }
+    }
+
     auto fill = [&](QString qss) {
         qss.replace(QLatin1String("{{windowBg}}"), QLatin1String(p.windowBg));
         qss.replace(QLatin1String("{{sidebarBg}}"), QLatin1String(p.sidebarBg));
@@ -739,6 +753,7 @@ void MainWindow::applyTheme()
         qss.replace(QLatin1String("{{scrollHandle}}"), QLatin1String(p.scrollHandle));
         qss.replace(QLatin1String("{{scrollTrack}}"), QLatin1String(p.scrollTrack));
         qss.replace(QLatin1String("{{checkChecked}}"), QLatin1String(p.checkChecked));
+        qss.replace(QLatin1String("{{uiFontFamily}}"), uiFontFamilyCss);
         return qss;
     };
 
@@ -746,7 +761,7 @@ void MainWindow::applyTheme()
         "QMainWindow, QWidget#dashboardPage, QWidget#sessionWorkspace, QWidget#terminalWindow, QWidget#sftpWindow {"
         "  background-color: {{windowBg}};"
         "  color: {{text}};"
-        "  font-family: monospace;"
+        "{{uiFontFamily}}"
         "}"
         "QWidget#dashMain { background: {{windowBg}}; }"
         "QWidget#dashSidebar {"

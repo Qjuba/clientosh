@@ -111,6 +111,7 @@ private:
     void ensureSelectedFonts();
     void refreshFontPreviews();
     void persistAppearanceLive();
+    void persistPrefsLive();
     void persistHighlightSettings();
     void notifyHighlightSettingsChanged();
     void syncColorSwatch(QAbstractButton* btn, const QColor& color);

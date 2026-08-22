@@ -611,20 +611,15 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
                 QStringLiteral("Images (*.png *.jpg *.jpeg *.bmp *.webp);;All files (*.*)"));
             if (!path.isEmpty()) {
                 m_settingsTermBgImage->setText(QFileInfo(path).fileName());
+                // Path must be stored before persistAppearanceLive reads it.
                 AppSettings::setTerminalBgImage(path);
                 persistAppearanceLive();
             }
         });
         connect(m_settingsTermBgOpacity, qOverload<int>(&QSpinBox::valueChanged), this,
-                [this](int value) {
-                    AppSettings::setTerminalBgOpacity(qreal(value) / 100.0);
-                    persistAppearanceLive();
-                });
+                [this](int) { persistAppearanceLive(); });
         connect(m_settingsTermBgBlur, qOverload<int>(&QSpinBox::valueChanged), this,
-                [this](int value) {
-                    AppSettings::setTerminalBgBlur(value);
-                    persistAppearanceLive();
-                });
+                [this](int) { persistAppearanceLive(); });
 
         connect(m_settingsUiFontFamily, &QComboBox::currentIndexChanged, this, [this, refreshPreviews](int) {
             ensureSelectedFonts();
@@ -1472,6 +1467,17 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     connect(m_settingsAnimations, &QCheckBox::toggled, this, [](bool on) {
         Motion::setEnabled(on);
     });
+    connect(m_settingsSavePassDefault, &QCheckBox::toggled, this, &DashboardPage::persistPrefsLive);
+    connect(m_settingsDefaultHost, &QLineEdit::editingFinished, this, &DashboardPage::persistPrefsLive);
+    connect(m_settingsDefaultUser, &QLineEdit::editingFinished, this, &DashboardPage::persistPrefsLive);
+    connect(m_settingsShowStats, &QCheckBox::toggled, this, &DashboardPage::persistPrefsLive);
+    connect(m_settingsStatsInterval, qOverload<int>(&QSpinBox::valueChanged), this,
+            [this](int) { persistPrefsLive(); });
+    connect(m_settingsDefaultPort, qOverload<int>(&QSpinBox::valueChanged), this,
+            [this](int) { persistPrefsLive(); });
+    connect(m_settingsHideDotfiles, &QCheckBox::toggled, this, &DashboardPage::persistPrefsLive);
+    connect(m_settingsSftpView, &QComboBox::currentIndexChanged, this,
+            [this](int) { persistPrefsLive(); });
     // ---- Sync (background controller, never blocks UI) ---------------
     m_sync = new SyncController(this);
     {
@@ -1722,6 +1728,7 @@ void DashboardPage::populateFontCombos()
 
     auto fillUi = [&](QComboBox* box) {
         const QString current = box->currentData().toString();
+        const bool wasBlocked = box->signalsBlocked();
         box->blockSignals(true);
         box->clear();
         box->addItem(QStringLiteral("Auto (system UI)"), QString());
@@ -1748,11 +1755,12 @@ void DashboardPage::populateFontCombos()
         }
         int idx = box->findData(current);
         box->setCurrentIndex(idx >= 0 ? idx : 0);
-        box->blockSignals(false);
+        box->blockSignals(wasBlocked);
     };
 
     auto fillTerm = [&](QComboBox* box) {
         const QString current = box->currentData().toString();
+        const bool wasBlocked = box->signalsBlocked();
         box->blockSignals(true);
         box->clear();
         box->addItem(QStringLiteral("Auto (system monospace)"), QString());
@@ -1769,7 +1777,7 @@ void DashboardPage::populateFontCombos()
         }
         int idx = box->findData(current);
         box->setCurrentIndex(idx >= 0 ? idx : 0);
-        box->blockSignals(false);
+        box->blockSignals(wasBlocked);
     };
 
     fillUi(m_settingsUiFontFamily);
@@ -1878,6 +1886,10 @@ void DashboardPage::persistAppearanceLive()
     }
     m_applyingAppearance = true;
 
+    // Read path before opening the writer — never mix setValueSync() with a
+    // long-lived QSettings (stale sync can wipe sibling keys).
+    const QString bgImagePath = AppSettings::terminalBgImage();
+
     // One QSettings instance for the whole write. Mixing a long-lived QSettings
     // with AppSettings::setValueSync() caused s.sync() to rewrite the INI from a
     // stale snapshot and wipe highlightAddresses / highlightLogKeywords back to false.
@@ -1890,6 +1902,15 @@ void DashboardPage::persistAppearanceLive()
                qBound(9, m_settingsFontSize->value(), 22));
     s.setValue(QLatin1String(AppSettings::kTerminalFg), m_termFg.name(QColor::HexRgb));
     s.setValue(QLatin1String(AppSettings::kTerminalBg), m_termBg.name(QColor::HexRgb));
+    s.setValue(QLatin1String(AppSettings::kTerminalBgImage), bgImagePath);
+    if (m_settingsTermBgOpacity) {
+        s.setValue(QLatin1String(AppSettings::kTerminalBgOpacity),
+                   qBound(0.0, qreal(m_settingsTermBgOpacity->value()) / 100.0, 1.0));
+    }
+    if (m_settingsTermBgBlur) {
+        s.setValue(QLatin1String(AppSettings::kTerminalBgBlur),
+                   qBound(0, m_settingsTermBgBlur->value(), 100));
+    }
     // Do NOT rewrite highlight* here — those keys are owned by the checkbox toggles.
     s.sync();
 
@@ -1907,6 +1928,43 @@ void DashboardPage::persistAppearanceLive()
         }
     }
     m_applyingAppearance = false;
+}
+
+void DashboardPage::persistPrefsLive()
+{
+    // General / Performance / SSH / SFTP prefs that previously required Save.
+    // One QSettings batch — never call setValueSync while this object lives.
+    QSettings s;
+    if (m_settingsSavePassDefault) {
+        s.setValue(QLatin1String(AppSettings::kSavePasswordDefault),
+                   m_settingsSavePassDefault->isChecked());
+    }
+    if (m_settingsDefaultHost) {
+        const QString host = m_settingsDefaultHost->text().trimmed();
+        s.setValue(QLatin1String(AppSettings::kDefaultHost),
+                   host.isEmpty() ? QStringLiteral("127.0.0.1") : host);
+    }
+    if (m_settingsDefaultUser) {
+        s.setValue(QLatin1String(AppSettings::kDefaultUser),
+                   m_settingsDefaultUser->text().trimmed());
+    }
+    if (m_settingsShowStats) {
+        s.setValue(QLatin1String(AppSettings::kShowServerStats), m_settingsShowStats->isChecked());
+    }
+    if (m_settingsStatsInterval) {
+        s.setValue(QLatin1String(AppSettings::kStatsIntervalSec), m_settingsStatsInterval->value());
+    }
+    if (m_settingsDefaultPort) {
+        s.setValue(QLatin1String(AppSettings::kDefaultPort), m_settingsDefaultPort->value());
+    }
+    if (m_settingsHideDotfiles) {
+        s.setValue(QLatin1String(AppSettings::kHideDotfiles), m_settingsHideDotfiles->isChecked());
+    }
+    if (m_settingsSftpView) {
+        s.setValue(QLatin1String(AppSettings::kSftpDefaultView),
+                   m_settingsSftpView->currentData().toString());
+    }
+    s.sync();
 }
 
 void DashboardPage::persistShortcutsLive()
@@ -3343,10 +3401,16 @@ void DashboardPage::connectFromForm()
 
 void DashboardPage::loadSettingsUi()
 {
-    QSettings s;
-    m_settingsSavePassDefault->setChecked(AppSettings::savePasswordDefault());
-    m_settingsDefaultHost->setText(AppSettings::defaultHost());
-    m_settingsDefaultUser->setText(AppSettings::defaultUser());
+    // Do not keep a long-lived QSettings here — its destructor sync can overwrite
+    // concurrent writes (e.g. Motion::setEnabled) with a stale snapshot.
+    {
+        const QSignalBlocker b1(m_settingsSavePassDefault);
+        const QSignalBlocker b2(m_settingsDefaultHost);
+        const QSignalBlocker b3(m_settingsDefaultUser);
+        m_settingsSavePassDefault->setChecked(AppSettings::savePasswordDefault());
+        m_settingsDefaultHost->setText(AppSettings::defaultHost());
+        m_settingsDefaultUser->setText(AppSettings::defaultUser());
+    }
 
     // Block live-persist handlers while hydrating Appearance controls.
     const QList<QObject*> appearanceBlocks = {
@@ -3417,13 +3481,19 @@ void DashboardPage::loadSettingsUi()
     m_settingsAnimations->blockSignals(false);
     Motion::setEnabled(animations);
 
-    m_settingsShowStats->setChecked(AppSettings::showServerStats());
-    m_settingsStatsInterval->setValue(AppSettings::statsIntervalSec());
-    m_settingsDefaultPort->setValue(AppSettings::defaultPort());
-
-    m_settingsHideDotfiles->setChecked(AppSettings::hideDotfiles());
-    const int viewIdx = m_settingsSftpView->findData(AppSettings::sftpDefaultView());
-    m_settingsSftpView->setCurrentIndex(viewIdx >= 0 ? viewIdx : 0);
+    {
+        const QSignalBlocker b1(m_settingsShowStats);
+        const QSignalBlocker b2(m_settingsStatsInterval);
+        const QSignalBlocker b3(m_settingsDefaultPort);
+        const QSignalBlocker b4(m_settingsHideDotfiles);
+        const QSignalBlocker b5(m_settingsSftpView);
+        m_settingsShowStats->setChecked(AppSettings::showServerStats());
+        m_settingsStatsInterval->setValue(AppSettings::statsIntervalSec());
+        m_settingsDefaultPort->setValue(AppSettings::defaultPort());
+        m_settingsHideDotfiles->setChecked(AppSettings::hideDotfiles());
+        const int viewIdx = m_settingsSftpView->findData(AppSettings::sftpDefaultView());
+        m_settingsSftpView->setCurrentIndex(viewIdx >= 0 ? viewIdx : 0);
+    }
     if (m_settingsSftpVerbose) {
         m_settingsSftpVerbose->blockSignals(true);
         m_settingsSftpVerbose->setChecked(AppSettings::sftpVerboseLogging());
@@ -3482,14 +3552,32 @@ void DashboardPage::loadSettingsUi()
         }
     }
 
-    m_shortcutNewSession->setKeySequence(AppSettings::shortcutNewSession());
-    m_shortcutSettings->setKeySequence(AppSettings::shortcutSettings());
-    m_shortcutDashboard->setKeySequence(AppSettings::shortcutDashboard());
-    m_shortcutClosePanel->setKeySequence(AppSettings::shortcutClosePanel());
-    m_shortcutOpenSftp->setKeySequence(AppSettings::shortcutOpenSftp());
-    m_shortcutFontLarger->setKeySequence(AppSettings::shortcutFontLarger());
-    m_shortcutFontSmaller->setKeySequence(AppSettings::shortcutFontSmaller());
-    m_shortcutFontReset->setKeySequence(AppSettings::shortcutFontReset());
+    // Load stored bindings even when disabled — shortcutX() returns empty when
+    // off, and persisting that would wipe the user's key sequences.
+    m_shortcutNewSession->setKeySequence(
+        AppSettings::shortcutFromSetting(AppSettings::kShortcutNewSession,
+                                         QKeySequence(QStringLiteral("Ctrl+N"))));
+    m_shortcutSettings->setKeySequence(
+        AppSettings::shortcutFromSetting(AppSettings::kShortcutSettings,
+                                         QKeySequence(QStringLiteral("Ctrl+,"))));
+    m_shortcutDashboard->setKeySequence(
+        AppSettings::shortcutFromSetting(AppSettings::kShortcutDashboard,
+                                         QKeySequence(QStringLiteral("Ctrl+Shift+D"))));
+    m_shortcutClosePanel->setKeySequence(
+        AppSettings::shortcutFromSetting(AppSettings::kShortcutClosePanel,
+                                         QKeySequence(QStringLiteral("Ctrl+W"))));
+    m_shortcutOpenSftp->setKeySequence(
+        AppSettings::shortcutFromSetting(AppSettings::kShortcutOpenSftp,
+                                         QKeySequence(QStringLiteral("Ctrl+Shift+S"))));
+    m_shortcutFontLarger->setKeySequence(
+        AppSettings::shortcutFromSetting(AppSettings::kShortcutFontLarger,
+                                         QKeySequence(QStringLiteral("Ctrl+="))));
+    m_shortcutFontSmaller->setKeySequence(
+        AppSettings::shortcutFromSetting(AppSettings::kShortcutFontSmaller,
+                                         QKeySequence(QStringLiteral("Ctrl+-"))));
+    m_shortcutFontReset->setKeySequence(
+        AppSettings::shortcutFromSetting(AppSettings::kShortcutFontReset,
+                                         QKeySequence(QStringLiteral("Ctrl+0"))));
     m_settingsCtrlScrollZoom->blockSignals(false);
     for (QKeySequenceEdit* e : shortcutEdits) {
         if (e) {
@@ -3505,71 +3593,85 @@ void DashboardPage::loadSettingsUi()
 
 void DashboardPage::saveSettingsUi()
 {
-    // Single QSettings write pass — never call setValueSync() while this object
-    // is alive, or a later s.sync() will restore stale highlight* values.
-    QSettings s;
-    s.setValue(QLatin1String(AppSettings::kSavePasswordDefault), m_settingsSavePassDefault->isChecked());
-    s.setValue(QLatin1String(AppSettings::kDefaultHost), m_settingsDefaultHost->text().trimmed().isEmpty()
-                                                             ? QStringLiteral("127.0.0.1")
-                                                             : m_settingsDefaultHost->text().trimmed());
-    s.setValue(QLatin1String(AppSettings::kDefaultUser), m_settingsDefaultUser->text().trimmed());
-    s.setValue(QLatin1String(AppSettings::kTheme), m_settingsTheme->currentData().toString());
-    s.setValue(QLatin1String(AppSettings::kUiFontFamily), m_settingsUiFontFamily->currentData().toString());
-    s.setValue(QLatin1String(AppSettings::kUiFontSize), m_settingsUiFontSize->value());
-    s.setValue(QLatin1String(AppSettings::kFontFamily), m_settingsFontFamily->currentData().toString());
-    s.setValue(QLatin1String(AppSettings::kFontSize), qBound(9, m_settingsFontSize->value(), 22));
-    s.setValue(QLatin1String(AppSettings::kTerminalFg), m_termFg.name(QColor::HexRgb));
-    s.setValue(QLatin1String(AppSettings::kTerminalBg), m_termBg.name(QColor::HexRgb));
-    if (m_settingsHighlightAddresses) {
-        s.setValue(QLatin1String(AppSettings::kHighlightAddresses),
-                   m_settingsHighlightAddresses->isChecked());
-    }
-    if (m_settingsHighlightKeywords) {
-        s.setValue(QLatin1String(AppSettings::kHighlightLogKeywords),
-                   m_settingsHighlightKeywords->isChecked());
-    }
-    if (m_settingsHighlightCiscoCli) {
-        s.setValue(QLatin1String(AppSettings::kHighlightCiscoCli),
-                   m_settingsHighlightCiscoCli->isChecked());
-    }
-    s.setValue(QLatin1String(AppSettings::kAnimationsEnabled), m_settingsAnimations->isChecked());
-    s.setValue(QLatin1String(AppSettings::kShowServerStats), m_settingsShowStats->isChecked());
-    s.setValue(QLatin1String(AppSettings::kStatsIntervalSec), m_settingsStatsInterval->value());
-    s.setValue(QLatin1String(AppSettings::kDefaultPort), m_settingsDefaultPort->value());
-    s.setValue(QLatin1String(AppSettings::kHideDotfiles), m_settingsHideDotfiles->isChecked());
-    s.setValue(QLatin1String(AppSettings::kSftpDefaultView), m_settingsSftpView->currentData().toString());
-    if (m_settingsSftpVerbose) {
-        s.setValue(QLatin1String(AppSettings::kSftpVerboseLogging), m_settingsSftpVerbose->isChecked());
-    }
+    const QString bgImagePath = AppSettings::terminalBgImage();
 
-    s.setValue(QLatin1String(AppSettings::kCtrlScrollFontZoom), m_settingsCtrlScrollZoom->isChecked());
-    s.setValue(QLatin1String(AppSettings::kScrollSensitivity), m_settingsScrollSensitivity->value());
-    s.setValue(QLatin1String(AppSettings::kCopyPasteMode), m_settingsCopyPaste->currentData().toString());
-    s.setValue(QLatin1String(AppSettings::kShortcutNewSession),
-               m_shortcutNewSession->keySequence().toString(QKeySequence::PortableText));
-    s.setValue(QLatin1String(AppSettings::kShortcutSettings),
-               m_shortcutSettings->keySequence().toString(QKeySequence::PortableText));
-    s.setValue(QLatin1String(AppSettings::kShortcutDashboard),
-               m_shortcutDashboard->keySequence().toString(QKeySequence::PortableText));
-    s.setValue(QLatin1String(AppSettings::kShortcutClosePanel),
-               m_shortcutClosePanel->keySequence().toString(QKeySequence::PortableText));
-    s.setValue(QLatin1String(AppSettings::kShortcutOpenSftp),
-               m_shortcutOpenSftp->keySequence().toString(QKeySequence::PortableText));
-    s.setValue(QLatin1String(AppSettings::kShortcutFontLarger),
-               m_shortcutFontLarger->keySequence().toString(QKeySequence::PortableText));
-    s.setValue(QLatin1String(AppSettings::kShortcutFontSmaller),
-               m_shortcutFontSmaller->keySequence().toString(QKeySequence::PortableText));
-    s.setValue(QLatin1String(AppSettings::kShortcutFontReset),
-               m_shortcutFontReset->keySequence().toString(QKeySequence::PortableText));
-    s.setValue(QLatin1String(AppSettings::kShortcutNewSessionEnabled), m_enableNewSession->isChecked());
-    s.setValue(QLatin1String(AppSettings::kShortcutSettingsEnabled), m_enableSettings->isChecked());
-    s.setValue(QLatin1String(AppSettings::kShortcutDashboardEnabled), m_enableDashboard->isChecked());
-    s.setValue(QLatin1String(AppSettings::kShortcutClosePanelEnabled), m_enableClosePanel->isChecked());
-    s.setValue(QLatin1String(AppSettings::kShortcutOpenSftpEnabled), m_enableOpenSftp->isChecked());
-    s.setValue(QLatin1String(AppSettings::kShortcutFontLargerEnabled), m_enableFontLarger->isChecked());
-    s.setValue(QLatin1String(AppSettings::kShortcutFontSmallerEnabled), m_enableFontSmaller->isChecked());
-    s.setValue(QLatin1String(AppSettings::kShortcutFontResetEnabled), m_enableFontReset->isChecked());
-    s.sync();
+    // Single QSettings write pass — destroy it before any other writer
+    // (persistSyncLive / Motion::setEnabled), or ~QSettings will restore a
+    // stale snapshot and wipe those keys.
+    {
+        QSettings s;
+        s.setValue(QLatin1String(AppSettings::kSavePasswordDefault), m_settingsSavePassDefault->isChecked());
+        s.setValue(QLatin1String(AppSettings::kDefaultHost), m_settingsDefaultHost->text().trimmed().isEmpty()
+                                                                 ? QStringLiteral("127.0.0.1")
+                                                                 : m_settingsDefaultHost->text().trimmed());
+        s.setValue(QLatin1String(AppSettings::kDefaultUser), m_settingsDefaultUser->text().trimmed());
+        s.setValue(QLatin1String(AppSettings::kTheme), m_settingsTheme->currentData().toString());
+        s.setValue(QLatin1String(AppSettings::kUiFontFamily), m_settingsUiFontFamily->currentData().toString());
+        s.setValue(QLatin1String(AppSettings::kUiFontSize), m_settingsUiFontSize->value());
+        s.setValue(QLatin1String(AppSettings::kFontFamily), m_settingsFontFamily->currentData().toString());
+        s.setValue(QLatin1String(AppSettings::kFontSize), qBound(9, m_settingsFontSize->value(), 22));
+        s.setValue(QLatin1String(AppSettings::kTerminalFg), m_termFg.name(QColor::HexRgb));
+        s.setValue(QLatin1String(AppSettings::kTerminalBg), m_termBg.name(QColor::HexRgb));
+        s.setValue(QLatin1String(AppSettings::kTerminalBgImage), bgImagePath);
+        if (m_settingsTermBgOpacity) {
+            s.setValue(QLatin1String(AppSettings::kTerminalBgOpacity),
+                       qBound(0.0, qreal(m_settingsTermBgOpacity->value()) / 100.0, 1.0));
+        }
+        if (m_settingsTermBgBlur) {
+            s.setValue(QLatin1String(AppSettings::kTerminalBgBlur),
+                       qBound(0, m_settingsTermBgBlur->value(), 100));
+        }
+        if (m_settingsHighlightAddresses) {
+            s.setValue(QLatin1String(AppSettings::kHighlightAddresses),
+                       m_settingsHighlightAddresses->isChecked());
+        }
+        if (m_settingsHighlightKeywords) {
+            s.setValue(QLatin1String(AppSettings::kHighlightLogKeywords),
+                       m_settingsHighlightKeywords->isChecked());
+        }
+        if (m_settingsHighlightCiscoCli) {
+            s.setValue(QLatin1String(AppSettings::kHighlightCiscoCli),
+                       m_settingsHighlightCiscoCli->isChecked());
+        }
+        s.setValue(QLatin1String(AppSettings::kAnimationsEnabled), m_settingsAnimations->isChecked());
+        s.setValue(QLatin1String(AppSettings::kShowServerStats), m_settingsShowStats->isChecked());
+        s.setValue(QLatin1String(AppSettings::kStatsIntervalSec), m_settingsStatsInterval->value());
+        s.setValue(QLatin1String(AppSettings::kDefaultPort), m_settingsDefaultPort->value());
+        s.setValue(QLatin1String(AppSettings::kHideDotfiles), m_settingsHideDotfiles->isChecked());
+        s.setValue(QLatin1String(AppSettings::kSftpDefaultView), m_settingsSftpView->currentData().toString());
+        if (m_settingsSftpVerbose) {
+            s.setValue(QLatin1String(AppSettings::kSftpVerboseLogging), m_settingsSftpVerbose->isChecked());
+        }
+
+        s.setValue(QLatin1String(AppSettings::kCtrlScrollFontZoom), m_settingsCtrlScrollZoom->isChecked());
+        s.setValue(QLatin1String(AppSettings::kScrollSensitivity), m_settingsScrollSensitivity->value());
+        s.setValue(QLatin1String(AppSettings::kCopyPasteMode), m_settingsCopyPaste->currentData().toString());
+        s.setValue(QLatin1String(AppSettings::kShortcutNewSession),
+                   m_shortcutNewSession->keySequence().toString(QKeySequence::PortableText));
+        s.setValue(QLatin1String(AppSettings::kShortcutSettings),
+                   m_shortcutSettings->keySequence().toString(QKeySequence::PortableText));
+        s.setValue(QLatin1String(AppSettings::kShortcutDashboard),
+                   m_shortcutDashboard->keySequence().toString(QKeySequence::PortableText));
+        s.setValue(QLatin1String(AppSettings::kShortcutClosePanel),
+                   m_shortcutClosePanel->keySequence().toString(QKeySequence::PortableText));
+        s.setValue(QLatin1String(AppSettings::kShortcutOpenSftp),
+                   m_shortcutOpenSftp->keySequence().toString(QKeySequence::PortableText));
+        s.setValue(QLatin1String(AppSettings::kShortcutFontLarger),
+                   m_shortcutFontLarger->keySequence().toString(QKeySequence::PortableText));
+        s.setValue(QLatin1String(AppSettings::kShortcutFontSmaller),
+                   m_shortcutFontSmaller->keySequence().toString(QKeySequence::PortableText));
+        s.setValue(QLatin1String(AppSettings::kShortcutFontReset),
+                   m_shortcutFontReset->keySequence().toString(QKeySequence::PortableText));
+        s.setValue(QLatin1String(AppSettings::kShortcutNewSessionEnabled), m_enableNewSession->isChecked());
+        s.setValue(QLatin1String(AppSettings::kShortcutSettingsEnabled), m_enableSettings->isChecked());
+        s.setValue(QLatin1String(AppSettings::kShortcutDashboardEnabled), m_enableDashboard->isChecked());
+        s.setValue(QLatin1String(AppSettings::kShortcutClosePanelEnabled), m_enableClosePanel->isChecked());
+        s.setValue(QLatin1String(AppSettings::kShortcutOpenSftpEnabled), m_enableOpenSftp->isChecked());
+        s.setValue(QLatin1String(AppSettings::kShortcutFontLargerEnabled), m_enableFontLarger->isChecked());
+        s.setValue(QLatin1String(AppSettings::kShortcutFontSmallerEnabled), m_enableFontSmaller->isChecked());
+        s.setValue(QLatin1String(AppSettings::kShortcutFontResetEnabled), m_enableFontReset->isChecked());
+        s.sync();
+    }
 
     persistSyncLive();
 

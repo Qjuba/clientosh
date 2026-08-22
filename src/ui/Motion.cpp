@@ -121,6 +121,7 @@ void setEnabled(bool on)
     g_enabled = on;
     QSettings s;
     s.setValue(QLatin1String(kSettingsKey), on);
+    s.sync();
     if (!on) {
         releaseCaches();
     }

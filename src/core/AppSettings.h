@@ -83,23 +83,24 @@ inline void configureFileStorage()
 
     QSettings ini(QSettings::IniFormat, QSettings::UserScope,
                   QStringLiteral("clientosh"), QStringLiteral("clientosh"));
-    if (!ini.allKeys().isEmpty()) {
-        return;
+    if (ini.allKeys().isEmpty()) {
+        QSettings native(QSettings::NativeFormat, QSettings::UserScope,
+                         QStringLiteral("clientosh"), QStringLiteral("clientosh"));
+        const QStringList keys = native.allKeys();
+        for (const QString& key : keys) {
+            // Never copy secrets or the legacy profiles array into the INI —
+            // profiles/secrets are migrated into the encrypted vault by loadProfiles().
+            if (isSecretSettingsKey(key)
+                || key.startsWith(QLatin1String("profiles/"))) {
+                continue;
+            }
+            ini.setValue(key, native.value(key));
+        }
+        ini.sync();
     }
 
-    QSettings native(QSettings::NativeFormat, QSettings::UserScope,
-                     QStringLiteral("clientosh"), QStringLiteral("clientosh"));
-    const QStringList keys = native.allKeys();
-    for (const QString& key : keys) {
-        // Never copy secrets or the legacy profiles array into the INI —
-        // profiles/secrets are migrated into the encrypted vault by loadProfiles().
-        if (isSecretSettingsKey(key)
-            || key.startsWith(QLatin1String("profiles/"))) {
-            continue;
-        }
-        ini.setValue(key, native.value(key));
-    }
-    ini.sync();
+    // Always scrub leftover plaintext passwords from INI + Native stores.
+    purgeAllPlaintextSecrets();
 }
 
 inline constexpr const char* kSavePasswordDefault = "settings/savePasswordDefault";
@@ -250,7 +251,7 @@ inline QString terminalBgImage()
 
 inline void setTerminalBgImage(const QString& imagePath)
 {
-    QSettings().setValue(QLatin1String(kTerminalBgImage), imagePath);
+    setValueSync(kTerminalBgImage, imagePath);
 }
 
 inline qreal terminalBgOpacity()
@@ -260,7 +261,7 @@ inline qreal terminalBgOpacity()
 
 inline void setTerminalBgOpacity(qreal opacity)
 {
-    QSettings().setValue(QLatin1String(kTerminalBgOpacity), qBound(0.0, opacity, 1.0));
+    setValueSync(kTerminalBgOpacity, qBound(0.0, opacity, 1.0));
 }
 
 inline int terminalBgBlur()
@@ -270,7 +271,7 @@ inline int terminalBgBlur()
 
 inline void setTerminalBgBlur(int radius)
 {
-    QSettings().setValue(QLatin1String(kTerminalBgBlur), qBound(0, radius, 100));
+    setValueSync(kTerminalBgBlur, qBound(0, radius, 100));
 }
 
 inline void resetTerminalAppearance()
@@ -281,6 +282,7 @@ inline void resetTerminalAppearance()
     s.remove(QLatin1String(kTerminalBgImage));
     s.remove(QLatin1String(kTerminalBgOpacity));
     s.remove(QLatin1String(kTerminalBgBlur));
+    s.sync();
 }
 
 inline QString defaultHost()

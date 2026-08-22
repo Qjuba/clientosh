@@ -555,6 +555,11 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         m_settingsHighlightCiscoCli->setToolTip(QStringLiteral(
             "Highlights Cisco interface names, operational states, routing protocols, "
             "configuration prompts, and common faults."));
+        // Hydrate before connecting toggles so a live-persist cannot write the
+        // unchecked construction defaults into the INI.
+        m_settingsHighlightAddresses->setChecked(AppSettings::highlightAddresses());
+        m_settingsHighlightKeywords->setChecked(AppSettings::highlightLogKeywords());
+        m_settingsHighlightCiscoCli->setChecked(AppSettings::highlightCiscoCli());
 
         secLay->addWidget(uiPreview);
         secLay->addWidget(m_settingsTermPreview);
@@ -639,14 +644,26 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
                     refreshPreviews();
                     persistAppearanceLive();
                 });
-        connect(m_settingsHighlightAddresses, &QCheckBox::toggled, this, [this](bool) {
-            persistAppearanceLive();
+        connect(m_settingsHighlightAddresses, &QCheckBox::toggled, this, [this](bool on) {
+            if (m_applyingAppearance) {
+                return;
+            }
+            AppSettings::setHighlightAddresses(on);
+            notifyHighlightSettingsChanged();
         });
-        connect(m_settingsHighlightKeywords, &QCheckBox::toggled, this, [this](bool) {
-            persistAppearanceLive();
+        connect(m_settingsHighlightKeywords, &QCheckBox::toggled, this, [this](bool on) {
+            if (m_applyingAppearance) {
+                return;
+            }
+            AppSettings::setHighlightLogKeywords(on);
+            notifyHighlightSettingsChanged();
         });
-        connect(m_settingsHighlightCiscoCli, &QCheckBox::toggled, this, [this](bool) {
-            persistAppearanceLive();
+        connect(m_settingsHighlightCiscoCli, &QCheckBox::toggled, this, [this](bool on) {
+            if (m_applyingAppearance) {
+                return;
+            }
+            AppSettings::setHighlightCiscoCli(on);
+            notifyHighlightSettingsChanged();
         });
 
         connect(FontManager::instance(), &FontManager::downloadStarted, this,
@@ -1821,21 +1838,73 @@ void DashboardPage::pickTerminalColor(bool foreground)
     persistAppearanceLive();
 }
 
+void DashboardPage::persistHighlightSettings()
+{
+    if (!m_settingsHighlightAddresses || !m_settingsHighlightKeywords || !m_settingsHighlightCiscoCli) {
+        return;
+    }
+    AppSettings::setHighlightAddresses(m_settingsHighlightAddresses->isChecked());
+    AppSettings::setHighlightLogKeywords(m_settingsHighlightKeywords->isChecked());
+    AppSettings::setHighlightCiscoCli(m_settingsHighlightCiscoCli->isChecked());
+}
+
+void DashboardPage::notifyHighlightSettingsChanged()
+{
+    // Refresh terminals only — do not reopen a shared QSettings object that could
+    // clobber the highlight keys we just wrote.
+    m_applyingAppearance = true;
+    const QList<QCheckBox*> boxes = {m_settingsHighlightAddresses, m_settingsHighlightKeywords,
+                                     m_settingsHighlightCiscoCli};
+    for (QCheckBox* b : boxes) {
+        if (b) {
+            b->blockSignals(true);
+        }
+    }
+    emit settingsApplied();
+    for (QCheckBox* b : boxes) {
+        if (b) {
+            b->blockSignals(false);
+        }
+    }
+    m_applyingAppearance = false;
+}
+
 void DashboardPage::persistAppearanceLive()
 {
+    if (m_applyingAppearance) {
+        return;
+    }
+    m_applyingAppearance = true;
+
+    // One QSettings instance for the whole write. Mixing a long-lived QSettings
+    // with AppSettings::setValueSync() caused s.sync() to rewrite the INI from a
+    // stale snapshot and wipe highlightAddresses / highlightLogKeywords back to false.
     QSettings s;
     s.setValue(QLatin1String(AppSettings::kTheme), m_settingsTheme->currentData().toString());
     s.setValue(QLatin1String(AppSettings::kUiFontFamily), m_settingsUiFontFamily->currentData().toString());
     s.setValue(QLatin1String(AppSettings::kUiFontSize), m_settingsUiFontSize->value());
     s.setValue(QLatin1String(AppSettings::kFontFamily), m_settingsFontFamily->currentData().toString());
-    AppSettings::setFontSize(m_settingsFontSize->value());
-    AppSettings::setColorSetting(AppSettings::kTerminalFg, m_termFg);
-    AppSettings::setColorSetting(AppSettings::kTerminalBg, m_termBg);
-    s.setValue(QLatin1String(AppSettings::kHighlightAddresses), m_settingsHighlightAddresses->isChecked());
-    s.setValue(QLatin1String(AppSettings::kHighlightLogKeywords), m_settingsHighlightKeywords->isChecked());
-    s.setValue(QLatin1String(AppSettings::kHighlightCiscoCli), m_settingsHighlightCiscoCli->isChecked());
+    s.setValue(QLatin1String(AppSettings::kFontSize),
+               qBound(9, m_settingsFontSize->value(), 22));
+    s.setValue(QLatin1String(AppSettings::kTerminalFg), m_termFg.name(QColor::HexRgb));
+    s.setValue(QLatin1String(AppSettings::kTerminalBg), m_termBg.name(QColor::HexRgb));
+    // Do NOT rewrite highlight* here — those keys are owned by the checkbox toggles.
     s.sync();
+
+    const QList<QCheckBox*> boxes = {m_settingsHighlightAddresses, m_settingsHighlightKeywords,
+                                     m_settingsHighlightCiscoCli};
+    for (QCheckBox* b : boxes) {
+        if (b) {
+            b->blockSignals(true);
+        }
+    }
     emit settingsApplied();
+    for (QCheckBox* b : boxes) {
+        if (b) {
+            b->blockSignals(false);
+        }
+    }
+    m_applyingAppearance = false;
 }
 
 void DashboardPage::persistShortcutsLive()
@@ -1844,23 +1913,30 @@ void DashboardPage::persistShortcutsLive()
     s.setValue(QLatin1String(AppSettings::kCtrlScrollFontZoom), m_settingsCtrlScrollZoom->isChecked());
     s.setValue(QLatin1String(AppSettings::kScrollSensitivity), m_settingsScrollSensitivity->value());
     s.setValue(QLatin1String(AppSettings::kCopyPasteMode), m_settingsCopyPaste->currentData().toString());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutNewSession, m_shortcutNewSession->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutSettings, m_shortcutSettings->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutDashboard, m_shortcutDashboard->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutClosePanel, m_shortcutClosePanel->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutOpenSftp, m_shortcutOpenSftp->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutFontLarger, m_shortcutFontLarger->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutFontSmaller, m_shortcutFontSmaller->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutFontReset, m_shortcutFontReset->keySequence());
-
-    AppSettings::setShortcutEnabled(AppSettings::kShortcutNewSessionEnabled, m_enableNewSession->isChecked());
-    AppSettings::setShortcutEnabled(AppSettings::kShortcutSettingsEnabled, m_enableSettings->isChecked());
-    AppSettings::setShortcutEnabled(AppSettings::kShortcutDashboardEnabled, m_enableDashboard->isChecked());
-    AppSettings::setShortcutEnabled(AppSettings::kShortcutClosePanelEnabled, m_enableClosePanel->isChecked());
-    AppSettings::setShortcutEnabled(AppSettings::kShortcutOpenSftpEnabled, m_enableOpenSftp->isChecked());
-    AppSettings::setShortcutEnabled(AppSettings::kShortcutFontLargerEnabled, m_enableFontLarger->isChecked());
-    AppSettings::setShortcutEnabled(AppSettings::kShortcutFontSmallerEnabled, m_enableFontSmaller->isChecked());
-    AppSettings::setShortcutEnabled(AppSettings::kShortcutFontResetEnabled, m_enableFontReset->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutNewSession),
+               m_shortcutNewSession->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutSettings),
+               m_shortcutSettings->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutDashboard),
+               m_shortcutDashboard->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutClosePanel),
+               m_shortcutClosePanel->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutOpenSftp),
+               m_shortcutOpenSftp->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutFontLarger),
+               m_shortcutFontLarger->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutFontSmaller),
+               m_shortcutFontSmaller->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutFontReset),
+               m_shortcutFontReset->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutNewSessionEnabled), m_enableNewSession->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutSettingsEnabled), m_enableSettings->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutDashboardEnabled), m_enableDashboard->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutClosePanelEnabled), m_enableClosePanel->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutOpenSftpEnabled), m_enableOpenSftp->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutFontLargerEnabled), m_enableFontLarger->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutFontSmallerEnabled), m_enableFontSmaller->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutFontResetEnabled), m_enableFontReset->isChecked());
     s.sync();
     emit settingsApplied();
 }
@@ -3405,6 +3481,8 @@ void DashboardPage::loadSettingsUi()
 
 void DashboardPage::saveSettingsUi()
 {
+    // Single QSettings write pass — never call setValueSync() while this object
+    // is alive, or a later s.sync() will restore stale highlight* values.
     QSettings s;
     s.setValue(QLatin1String(AppSettings::kSavePasswordDefault), m_settingsSavePassDefault->isChecked());
     s.setValue(QLatin1String(AppSettings::kDefaultHost), m_settingsDefaultHost->text().trimmed().isEmpty()
@@ -3415,12 +3493,21 @@ void DashboardPage::saveSettingsUi()
     s.setValue(QLatin1String(AppSettings::kUiFontFamily), m_settingsUiFontFamily->currentData().toString());
     s.setValue(QLatin1String(AppSettings::kUiFontSize), m_settingsUiFontSize->value());
     s.setValue(QLatin1String(AppSettings::kFontFamily), m_settingsFontFamily->currentData().toString());
-    AppSettings::setFontSize(m_settingsFontSize->value());
-    AppSettings::setColorSetting(AppSettings::kTerminalFg, m_termFg);
-    AppSettings::setColorSetting(AppSettings::kTerminalBg, m_termBg);
-    s.setValue(QLatin1String(AppSettings::kHighlightAddresses), m_settingsHighlightAddresses->isChecked());
-    s.setValue(QLatin1String(AppSettings::kHighlightLogKeywords), m_settingsHighlightKeywords->isChecked());
-    s.setValue(QLatin1String(AppSettings::kHighlightCiscoCli), m_settingsHighlightCiscoCli->isChecked());
+    s.setValue(QLatin1String(AppSettings::kFontSize), qBound(9, m_settingsFontSize->value(), 22));
+    s.setValue(QLatin1String(AppSettings::kTerminalFg), m_termFg.name(QColor::HexRgb));
+    s.setValue(QLatin1String(AppSettings::kTerminalBg), m_termBg.name(QColor::HexRgb));
+    if (m_settingsHighlightAddresses) {
+        s.setValue(QLatin1String(AppSettings::kHighlightAddresses),
+                   m_settingsHighlightAddresses->isChecked());
+    }
+    if (m_settingsHighlightKeywords) {
+        s.setValue(QLatin1String(AppSettings::kHighlightLogKeywords),
+                   m_settingsHighlightKeywords->isChecked());
+    }
+    if (m_settingsHighlightCiscoCli) {
+        s.setValue(QLatin1String(AppSettings::kHighlightCiscoCli),
+                   m_settingsHighlightCiscoCli->isChecked());
+    }
     s.setValue(QLatin1String(AppSettings::kAnimationsEnabled), m_settingsAnimations->isChecked());
     s.setValue(QLatin1String(AppSettings::kShowServerStats), m_settingsShowStats->isChecked());
     s.setValue(QLatin1String(AppSettings::kStatsIntervalSec), m_settingsStatsInterval->value());
@@ -3428,27 +3515,58 @@ void DashboardPage::saveSettingsUi()
     s.setValue(QLatin1String(AppSettings::kHideDotfiles), m_settingsHideDotfiles->isChecked());
     s.setValue(QLatin1String(AppSettings::kSftpDefaultView), m_settingsSftpView->currentData().toString());
     if (m_settingsSftpVerbose) {
-        AppSettings::setSftpVerboseLogging(m_settingsSftpVerbose->isChecked());
+        s.setValue(QLatin1String(AppSettings::kSftpVerboseLogging), m_settingsSftpVerbose->isChecked());
     }
 
     s.setValue(QLatin1String(AppSettings::kCtrlScrollFontZoom), m_settingsCtrlScrollZoom->isChecked());
     s.setValue(QLatin1String(AppSettings::kScrollSensitivity), m_settingsScrollSensitivity->value());
     s.setValue(QLatin1String(AppSettings::kCopyPasteMode), m_settingsCopyPaste->currentData().toString());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutNewSession, m_shortcutNewSession->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutSettings, m_shortcutSettings->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutDashboard, m_shortcutDashboard->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutClosePanel, m_shortcutClosePanel->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutOpenSftp, m_shortcutOpenSftp->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutFontLarger, m_shortcutFontLarger->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutFontSmaller, m_shortcutFontSmaller->keySequence());
-    AppSettings::setShortcutSetting(AppSettings::kShortcutFontReset, m_shortcutFontReset->keySequence());
+    s.setValue(QLatin1String(AppSettings::kShortcutNewSession),
+               m_shortcutNewSession->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutSettings),
+               m_shortcutSettings->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutDashboard),
+               m_shortcutDashboard->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutClosePanel),
+               m_shortcutClosePanel->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutOpenSftp),
+               m_shortcutOpenSftp->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutFontLarger),
+               m_shortcutFontLarger->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutFontSmaller),
+               m_shortcutFontSmaller->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutFontReset),
+               m_shortcutFontReset->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutNewSessionEnabled), m_enableNewSession->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutSettingsEnabled), m_enableSettings->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutDashboardEnabled), m_enableDashboard->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutClosePanelEnabled), m_enableClosePanel->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutOpenSftpEnabled), m_enableOpenSftp->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutFontLargerEnabled), m_enableFontLarger->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutFontSmallerEnabled), m_enableFontSmaller->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutFontResetEnabled), m_enableFontReset->isChecked());
     s.sync();
 
     persistSyncLive();
 
     Motion::setEnabled(m_settingsAnimations->isChecked());
     ensureSelectedFonts();
+
+    m_applyingAppearance = true;
+    const QList<QCheckBox*> boxes = {m_settingsHighlightAddresses, m_settingsHighlightKeywords,
+                                     m_settingsHighlightCiscoCli};
+    for (QCheckBox* b : boxes) {
+        if (b) {
+            b->blockSignals(true);
+        }
+    }
     emit settingsApplied();
+    for (QCheckBox* b : boxes) {
+        if (b) {
+            b->blockSignals(false);
+        }
+    }
+    m_applyingAppearance = false;
 
     m_hint->setText(QStringLiteral("settings saved"));
     appendLog(QStringLiteral("settings saved"));

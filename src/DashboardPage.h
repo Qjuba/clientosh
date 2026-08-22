@@ -111,6 +111,8 @@ private:
     void ensureSelectedFonts();
     void refreshFontPreviews();
     void persistAppearanceLive();
+    void persistHighlightSettings();
+    void notifyHighlightSettingsChanged();
     void syncColorSwatch(QAbstractButton* btn, const QColor& color);
     void pickTerminalColor(bool foreground);
     void persistShortcutsLive();
@@ -230,6 +232,7 @@ private:
     QCheckBox* m_settingsHighlightAddresses = nullptr;
     QCheckBox* m_settingsHighlightKeywords = nullptr;
     QCheckBox* m_settingsHighlightCiscoCli = nullptr;
+    bool m_applyingAppearance = false;
 
     QCheckBox* m_settingsCtrlScrollZoom = nullptr;
     QSlider* m_settingsScrollSensitivity = nullptr;

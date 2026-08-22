@@ -2,6 +2,7 @@
 
 #include "VaultManager.h"
 
+#include <QHash>
 #include <QString>
 #include <QVector>
 #include <QJsonArray>
@@ -136,9 +137,8 @@ inline QString connectionModeToString(ConnectionMode mode)
 }
 
 // ---- Legacy QSettings persistence (migration + graceful fallback) -------
-inline QVector<SessionProfile> profilesFromQSettings()
+inline QVector<SessionProfile> profilesFromQSettingsStore(QSettings& s)
 {
-    QSettings s;
     QVector<SessionProfile> out;
     const int n = s.beginReadArray(QStringLiteral("profiles"));
     for (int i = 0; i < n; ++i) {
@@ -150,6 +150,7 @@ inline QVector<SessionProfile> profilesFromQSettings()
         p.port = s.value(QStringLiteral("port"), 22).toInt();
         p.user = s.value(QStringLiteral("user")).toString();
         p.savePassword = s.value(QStringLiteral("savePassword"), false).toBool();
+        // Read secrets only for one-shot migration into the encrypted vault.
         if (p.savePassword) {
             p.password = s.value(QStringLiteral("password")).toString();
         }
@@ -173,6 +174,47 @@ inline QVector<SessionProfile> profilesFromQSettings()
     }
     s.endArray();
     return out;
+}
+
+inline QVector<SessionProfile> profilesFromQSettings()
+{
+    // Prefer INI (current default), then fall back to NativeFormat leftovers.
+    QSettings ini(QSettings::IniFormat, QSettings::UserScope,
+                  QStringLiteral("clientosh"), QStringLiteral("clientosh"));
+    QVector<SessionProfile> out = profilesFromQSettingsStore(ini);
+    if (!out.isEmpty()) {
+        return out;
+    }
+    QSettings native(QSettings::NativeFormat, QSettings::UserScope,
+                     QStringLiteral("clientosh"), QStringLiteral("clientosh"));
+    return profilesFromQSettingsStore(native);
+}
+
+inline void wipeLegacyQSettingsProfiles()
+{
+    auto wipe = [](QSettings::Format format) {
+        QSettings s(format, QSettings::UserScope,
+                    QStringLiteral("clientosh"), QStringLiteral("clientosh"));
+        const QStringList keys = s.allKeys();
+        for (const QString& key : keys) {
+            const QString lower = key.toLower();
+            if (lower == QLatin1String("password")
+                || lower == QLatin1String("keypassphrase")
+                || lower.endsWith(QLatin1String("/password"))
+                || lower.endsWith(QLatin1String("\\password"))
+                || lower.endsWith(QLatin1String("/keypassphrase"))
+                || lower.endsWith(QLatin1String("\\keypassphrase"))) {
+                s.remove(key);
+            }
+        }
+        s.beginGroup(QLatin1String("profiles"));
+        s.remove(QString());
+        s.endGroup();
+        s.remove(QLatin1String("profiles"));
+        s.sync();
+    };
+    wipe(QSettings::IniFormat);
+    wipe(QSettings::NativeFormat);
 }
 
 // ---- Vault (encrypted connects.json + keyring dbvault) --------------------
@@ -264,11 +306,13 @@ inline QVector<SessionProfile> loadProfiles()
     const VaultManager::LoadOutcome oc = vault.loadConnectsJson(plain);
 
     // First run / nothing saved yet (or legacy QSettings fallback on corruption):
-    // migrate any legacy QSettings profiles into the encrypted vault.
+    // migrate any leftover plaintext QSettings profiles into the encrypted vault,
+    // then wipe them so passwords never remain in INI/registry.
     if (oc == VaultManager::LoadOutcome::NotFound || oc == VaultManager::LoadOutcome::Corrupt) {
         QVector<SessionProfile> legacy = profilesFromQSettings();
         if (!legacy.isEmpty()) {
             saveProfiles(legacy);
+            wipeLegacyQSettingsProfiles();
         }
         return legacy;
     }
@@ -301,11 +345,45 @@ inline QVector<SessionProfile> loadProfiles()
         }
         out.push_back(p);
     }
-    // Persist any newly assigned ids so the next sync round-trip keeps a stable
-    // identity (otherwise every restart invents fresh UUIDs and join-merge
-    // creates duplicate hosts).
-    if (generatedIds) {
-        saveProfiles(out);
+
+    // If plaintext leftovers still hold secrets the vault is missing, import them
+    // into dbvault first — then permanently delete the plaintext stores.
+    {
+        const QVector<SessionProfile> legacy = profilesFromQSettings();
+        bool mergedSecrets = false;
+        if (!legacy.isEmpty()) {
+            QHash<QString, SessionProfile> legacyById;
+            for (const SessionProfile& lp : legacy) {
+                if (!lp.id.isEmpty()) {
+                    legacyById.insert(lp.id, lp);
+                }
+            }
+            for (SessionProfile& p : out) {
+                const SessionProfile lp = legacyById.value(p.id);
+                if (lp.id.isEmpty()) {
+                    continue;
+                }
+                if (p.savePassword && p.password.isEmpty() && !lp.password.isEmpty()) {
+                    p.password = lp.password;
+                    mergedSecrets = true;
+                }
+                if (p.saveKeyPassphrase && p.keyPassphrase.isEmpty() && !lp.keyPassphrase.isEmpty()) {
+                    p.keyPassphrase = lp.keyPassphrase;
+                    mergedSecrets = true;
+                }
+            }
+            if (mergedSecrets || generatedIds) {
+                saveProfiles(out);
+                generatedIds = false;
+            }
+            wipeLegacyQSettingsProfiles();
+        } else {
+            // No legacy profiles, but scrub any stray plaintext secret keys.
+            wipeLegacyQSettingsProfiles();
+            if (generatedIds) {
+                saveProfiles(out);
+            }
+        }
     }
     return out;
 }

@@ -7,6 +7,7 @@
 
 #include <QCommandLineParser>
 #include <QCoreApplication>
+#include <QSettings>
 #include <QUuid>
 
 #include <cstdio>
@@ -162,9 +163,9 @@ void configureParser(QCommandLineParser& parser)
             "  clientosh ssh user@prod.example.com -name Production\n"
             "  clientosh ssh 10.0.0.5:2222 -u admin -name Jump\n"
             "  clientosh sftp deploy@files.example.com -name Deploy\n"
+            "  clientosh ssh host -i ~/.ssh/id_ed25519 -u root --sftp\n"
             "  clientosh serial COM3 --baud 115200 -name Console\n"
             "  clientosh serial /dev/ttyUSB0 --baud 9600 -name Console\n"
-            "  clientosh ssh host -i ~/.ssh/id_ed25519 -u root --sftp\n"
             "\n"
             "Target: host, host:port, user@host, user@host:port, or a serial device\n"
             "Run without a command to open the dashboard."));
@@ -241,47 +242,52 @@ Request parse(const QCommandLineParser& parser)
         return req;
     }
 
-    const ParsedTarget target = parseTarget(pos.at(1));
-    if (!target.error.isEmpty()) {
-        req.error = target.error;
-        return req;
-    }
-
     SessionProfile profile;
     profile.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     profile.connectionMode = mode;
-    profile.host = target.host.trimmed();
-    profile.user = target.user.trimmed();
 
-    if (parser.isSet(QStringLiteral("user"))) {
-        profile.user = parser.value(QStringLiteral("user")).trimmed();
-    }
-
-    int port = target.port >= 0 ? target.port : defaultPortFor(mode);
-    if (parser.isSet(QStringLiteral("port"))) {
-        bool ok = false;
-        const int cliPort = parser.value(QStringLiteral("port")).toInt(&ok);
-        if (!ok || cliPort < 1 || cliPort > 65535) {
-            req.error = QStringLiteral("invalid --port value");
-            return req;
-        }
-        port = cliPort;
-    }
-    profile.port = port;
-
-    if (profile.isSerial()) {
-        bool ok = false;
-        const int baud = parser.value(QStringLiteral("baud")).toInt(&ok);
-        if (!ok || baud <= 0) {
-            req.error = QStringLiteral("invalid --baud value");
+    if (mode == ConnectionMode::Serial) {
+        profile.host = pos.at(1).trimmed();
+        if (profile.host.isEmpty()) {
+            req.error = QStringLiteral("serial device is required");
             return req;
         }
         if (parser.isSet(QStringLiteral("port"))) {
             req.error = QStringLiteral("--port is not valid with serial; use --baud");
             return req;
         }
+        bool baudOk = false;
+        const int baud = parser.value(QStringLiteral("baud")).toInt(&baudOk);
+        if (!baudOk || baud <= 0) {
+            req.error = QStringLiteral("invalid --baud value");
+            return req;
+        }
         profile.serialBaudRate = baud;
         profile.system = QStringLiteral("Serial");
+    } else {
+        const ParsedTarget target = parseTarget(pos.at(1));
+        if (!target.error.isEmpty()) {
+            req.error = target.error;
+            return req;
+        }
+        profile.host = target.host.trimmed();
+        profile.user = target.user.trimmed();
+
+        if (parser.isSet(QStringLiteral("user"))) {
+            profile.user = parser.value(QStringLiteral("user")).trimmed();
+        }
+
+        int port = target.port >= 0 ? target.port : defaultPortFor(mode);
+        if (parser.isSet(QStringLiteral("port"))) {
+            bool ok = false;
+            const int cliPort = parser.value(QStringLiteral("port")).toInt(&ok);
+            if (!ok || cliPort < 1 || cliPort > 65535) {
+                req.error = QStringLiteral("invalid --port value");
+                return req;
+            }
+            port = cliPort;
+        }
+        profile.port = port;
     }
 
     if (parser.isSet(QStringLiteral("name"))) {
@@ -317,7 +323,7 @@ Request parse(const QCommandLineParser& parser)
         return req;
     }
 
-    if (req.openSftpWithSsh && (profile.isTelnet() || profile.isSerial())) {
+    if (req.openSftpWithSsh && profile.connectionMode != ConnectionMode::Ssh) {
         req.error = QStringLiteral("--sftp is only valid with ssh");
         return req;
     }
@@ -343,8 +349,10 @@ int runHeadlessPhase(int argc, char* argv[], Request* outRequest, bool* outLaunc
     const bool wantVersion = argvHasVersion(argc, argv);
 
     QCoreApplication core(argc, argv);
+    core.setOrganizationName(QStringLiteral("clientosh"));
     core.setApplicationName(QStringLiteral("clientosh"));
     core.setApplicationVersion(QStringLiteral(CLIENTOSH_VERSION));
+    QSettings::setDefaultFormat(QSettings::IniFormat);
 
     QCommandLineParser parser;
     configureParser(parser);

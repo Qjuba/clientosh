@@ -227,6 +227,8 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_stack = new QStackedWidget(mainCol);
     mainLay->addWidget(m_stack, 1);
 
+    // Hallmark · component: hosts table · genre: modern-minimal · theme: app palette
+    // Pre-emit critique: P5 H5 E5 S5 R5 V4
     // ---- Hosts page ----
     m_hostsPage = new QWidget;
     auto* hostsLay = new QVBoxLayout(m_hostsPage);
@@ -238,6 +240,10 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_savedTree->setColumnCount(5);
     m_savedTree->setHeaderLabels({QStringLiteral("name"), QStringLiteral("type"), QStringLiteral("auth"),
                                   QStringLiteral("system"), QStringLiteral("")});
+    for (int column = 1; column <= 3; ++column) {
+        m_savedTree->headerItem()->setTextAlignment(column, Qt::AlignLeft | Qt::AlignVCenter);
+    }
+    m_savedTree->header()->setStretchLastSection(false);
     m_savedTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_savedTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
     m_savedTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
@@ -308,18 +314,14 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     keysLay->setContentsMargins(16, 12, 16, 10);
     keysLay->setSpacing(8);
 
-    auto* keysHint = new QLabel(
-        QStringLiteral("stored credentials by profile — secrets are never shown here"), m_keysPage);
-    keysHint->setObjectName(QStringLiteral("dashHint"));
-    keysLay->addWidget(keysHint);
-
     m_keysTable = new QTableWidget(0, 3, m_keysPage);
     styleTable(m_keysTable);
     m_keysTable->setHorizontalHeaderLabels(
         {QStringLiteral("profile"), QStringLiteral("password"), QStringLiteral("private key")});
+    m_keysTable->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_keysTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_keysTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_keysTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    m_keysTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     keysLay->addWidget(m_keysTable, 1);
 
     m_keysEmpty = new QLabel(QStringLiteral("no stored credentials"), m_keysPage);
@@ -2626,8 +2628,14 @@ void DashboardPage::rebuildSavedList()
     }
     m_savedTree->clear();
 
-    const int folderFontSize = AppSettings::uiFontSize();
-    const int entryFontSize = qMax(8, folderFontSize - 1);
+    const int baseFontSize = AppSettings::uiFontSize();
+    const int folderFontSize = baseFontSize;
+    const int nameFontSize = qMax(8, baseFontSize - 1);
+    const int metadataFontSize = qMax(8, baseFontSize - 2);
+    const QColor primaryGray = AppSettings::isLightTheme() ? QColor(0x2a, 0x2a, 0x2a)
+                                                           : QColor(0xb8, 0xb8, 0xb8);
+    const QColor secondaryGray = AppSettings::isLightTheme() ? QColor(0x5a, 0x5a, 0x5a)
+                                                             : QColor(0x8a, 0x8a, 0x8a);
     const auto applyFolderFont = [this, folderFontSize](QTreeWidgetItem* item) {
         QFont font = item->font(0);
         font.setPointSize(folderFontSize);
@@ -2637,13 +2645,19 @@ void DashboardPage::rebuildSavedList()
         }
         item->setSizeHint(0, QSize(0, QFontMetrics(font).height() + 10));
     };
-    const auto applyEntryFont = [this, entryFontSize](QTreeWidgetItem* item) {
-        QFont font = item->font(0);
-        font.setPointSize(entryFontSize);
-        for (int column = 0; column < m_savedTree->columnCount(); ++column) {
-            item->setFont(column, font);
+    const auto applyEntryStyle = [nameFontSize, metadataFontSize, secondaryGray](QTreeWidgetItem* item) {
+        QFont nameFont = item->font(0);
+        nameFont.setPointSize(nameFontSize);
+        item->setFont(0, nameFont);
+
+        QFont metadataFont = nameFont;
+        metadataFont.setPointSize(metadataFontSize);
+        for (int column = 1; column <= 3; ++column) {
+            item->setFont(column, metadataFont);
+            item->setForeground(column, secondaryGray);
+            item->setTextAlignment(column, Qt::AlignLeft | Qt::AlignVCenter);
         }
-        item->setSizeHint(0, QSize(0, QFontMetrics(font).height() + 6));
+        item->setSizeHint(0, QSize(0, QFontMetrics(nameFont).height() + 6));
     };
 
     // Reload tag state from disk (assignments + collapse).
@@ -2658,7 +2672,7 @@ void DashboardPage::rebuildSavedList()
         liveHeader->setData(0, Qt::UserRole + 1, QStringLiteral("live-header"));
         liveHeader->setFlags(Qt::ItemIsEnabled);
         applyFolderFont(liveHeader);
-        liveHeader->setForeground(0, QColor(0xc8, 0xc8, 0xc8));
+        liveHeader->setForeground(0, primaryGray);
 
         for (const QString& sessionId : liveIds) {
             const auto* live = m_sessions->session(sessionId);
@@ -2671,9 +2685,6 @@ void DashboardPage::rebuildSavedList()
             child->setData(0, Qt::UserRole + 1, QStringLiteral("live"));
             child->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
             child->setText(1, live->profile.connectionTypeLabel());
-            child->setForeground(1, live->profile.isTelnet() ? QColor(0xa8, 0x8a, 0x5a)
-                                  : live->profile.isSerial() ? QColor(0x68, 0x9a, 0xa8)
-                                                             : QColor(0x8a, 0x8a, 0x8a));
             // The connection type already has its own column; avoid repeating
             // labels such as "Telnet · connected · Telnet".
             QString status = live->status;
@@ -2683,11 +2694,8 @@ void DashboardPage::rebuildSavedList()
                 status = QStringLiteral("connecting");
             }
             child->setText(2, status);
-            child->setForeground(2, live->connected ? QColor(0x78, 0xa0, 0x78)
-                                                     : QColor(0x7a, 0x7a, 0x7a));
             child->setText(3, live->profile.systemLabel());
-            child->setForeground(3, QColor(0x7a, 0x7a, 0x7a));
-            applyEntryFont(child);
+            applyEntryStyle(child);
 
             auto* save = makeRowAction(QStringLiteral(":/icons/plus.svg"),
                                        QStringLiteral("save connection profile"), m_savedTree);
@@ -2762,7 +2770,7 @@ void DashboardPage::rebuildSavedList()
         header->setData(0, Qt::UserRole, s.tagName);
         header->setFlags(Qt::ItemIsEnabled);
         applyFolderFont(header);
-        header->setForeground(0, QColor(0xc8, 0xc8, 0xc8));
+        header->setForeground(0, primaryGray);
 
         for (const SessionProfile& p : s.profiles) {
             auto* child = new QTreeWidgetItem(header);
@@ -2771,10 +2779,6 @@ void DashboardPage::rebuildSavedList()
             child->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
 
             child->setText(1, p.connectionTypeLabel());
-            child->setForeground(1, p.isSftpOnly() ? QColor(0x9a, 0x9a, 0x9a)
-                                : p.isTelnet() ? QColor(0xa8, 0x8a, 0x5a)
-                                : p.isSerial() ? QColor(0x68, 0x9a, 0xa8)
-                                               : QColor(0x8a, 0x8a, 0x8a));
 
             QString auth = p.isSerial() ? QStringLiteral("—") : QStringLiteral("password");
             if (!p.isSerial() && p.usesPrivateKey() && p.savePassword) {
@@ -2785,11 +2789,16 @@ void DashboardPage::rebuildSavedList()
                 auth = QStringLiteral("prompt");
             }
             child->setText(2, auth);
-            child->setForeground(2, QColor(0x7a, 0x7a, 0x7a));
 
             child->setText(3, p.systemLabel());
-            child->setForeground(3, QColor(0x7a, 0x7a, 0x7a));
-            applyEntryFont(child);
+            applyEntryStyle(child);
+
+            auto* edit = makeRowAction(QStringLiteral(":/icons/edit.svg"),
+                                       QStringLiteral("edit connection profile"), m_savedTree);
+            connect(edit, &QToolButton::clicked, this, [this, profileId = p.id]() {
+                showEditSessionForm(profileId);
+            });
+            m_savedTree->setItemWidget(child, 4, edit);
         }
 
         // Restore collapsed state.
@@ -3119,6 +3128,11 @@ void DashboardPage::rebuildActiveList()
 void DashboardPage::rebuildKeychainList()
 {
     m_keysTable->setRowCount(0);
+    const int baseFontSize = AppSettings::uiFontSize();
+    const int nameFontSize = qMax(8, baseFontSize - 1);
+    const int metadataFontSize = qMax(8, baseFontSize - 2);
+    const QColor metadataColor = AppSettings::isLightTheme() ? QColor(0x5a, 0x5a, 0x5a)
+                                                              : QColor(0x8a, 0x8a, 0x8a);
     int stored = 0;
     for (const SessionProfile& p : m_profiles) {
         const bool hasPass = p.savePassword;
@@ -3132,10 +3146,18 @@ void DashboardPage::rebuildKeychainList()
 
         auto* nameItem = new QTableWidgetItem(p.displayTitle());
         nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        QFont nameFont = nameItem->font();
+        nameFont.setPointSize(nameFontSize);
+        nameItem->setFont(nameFont);
+        nameItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
         auto* passItem = new QTableWidgetItem(hasPass ? QStringLiteral("stored") : QStringLiteral("—"));
         passItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        passItem->setForeground(QColor(0x8a, 0x8a, 0x8a));
+        QFont metadataFont = nameFont;
+        metadataFont.setPointSize(metadataFontSize);
+        passItem->setFont(metadataFont);
+        passItem->setForeground(metadataColor);
+        passItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
         QString keyText = QStringLiteral("—");
         if (hasKey) {
@@ -3157,7 +3179,9 @@ void DashboardPage::rebuildKeychainList()
         }
         auto* keyItem = new QTableWidgetItem(keyText);
         keyItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        keyItem->setForeground(QColor(0x8a, 0x8a, 0x8a));
+        keyItem->setFont(metadataFont);
+        keyItem->setForeground(metadataColor);
+        keyItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
         m_keysTable->setItem(row, 0, nameItem);
         m_keysTable->setItem(row, 1, passItem);

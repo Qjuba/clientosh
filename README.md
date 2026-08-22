@@ -352,8 +352,9 @@ clientosh [options] <command> <target>
 | `ssh` / `connect` | SSH terminal (+ optional SFTP with `--sftp`) | 22 |
 | `telnet` | Telnet terminal | 23 |
 | `sftp` | SFTP file manager only | 22 |
+| `serial` / `com` | Local Serial/COM terminal | — |
 
-**Target** (required for connect commands): `host`, `host:port`, `user@host`, `user@host:port`, or IPv6 `[::1]:port`.
+**Target** (required for connect commands): `host`, `host:port`, `user@host`, `user@host:port`, IPv6 `[::1]:port`, or a serial device such as `COM3` or `/dev/ttyUSB0`.
 
 #### Help and version
 
@@ -388,6 +389,10 @@ clientosh ssh deploy@files.example.com --sftp -name Deploy
 clientosh sftp user@files.example.com -name Files
 clientosh sftp backup.local:2222 -u backup -name Backups
 
+# Serial / COM
+clientosh serial COM3 --baud 115200 -name Console
+clientosh serial /dev/ttyUSB0 --baud 9600 -name Console
+
 # Windows (path to built binary)
 .\build\clientosh.exe telnet 192.168.0.1:23 -name Router
 .\build\clientosh.exe ssh user@10.0.0.5 -name Prod
@@ -399,7 +404,7 @@ clientosh telnet router.lan:23 -name Router
 
 Connect commands open the **GUI** and start the session in a new tab. Use `-name` / `-n` to set the tab title. Passwords from `-p` / `--password` are used for this session only and are **not** saved to the vault.
 
-For Telnet, username is optional (you can type credentials manually in the terminal). For SSH and SFTP, provide `user@host` or `-u` / `--user`.
+For Telnet, username is optional (you can type credentials manually in the terminal). Serial sessions do not use authentication. For SSH and SFTP, provide `user@host` or `-u` / `--user`.
 
 #### Options
 
@@ -413,6 +418,7 @@ For Telnet, username is optional (you can type credentials manually in the termi
 | `--keyring` | Saved keyring key id |
 | `--key-passphrase` | Passphrase for an encrypted private key |
 | `--sftp` | With `ssh`, also open an SFTP pane |
+| `--baud` | Serial baud rate (default: 115200) |
 | `--verbose` | Verbose SFTP logging (same as Settings → SFTP) |
 | `-h`, `--help`, `-?` | Print usage and exit |
 | `-v`, `--version` | Print version and exit |

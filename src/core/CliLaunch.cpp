@@ -97,7 +97,7 @@ ConnectionMode modeFromCommand(const QString& cmd, QString* errorOut)
         return ConnectionMode::Serial;
     }
     if (errorOut) {
-        *errorOut = QStringLiteral("unknown command %1 (expected ssh, telnet, serial, or sftp)").arg(cmd);
+        *errorOut = QStringLiteral("unknown command %1 (expected ssh, telnet, sftp, or serial)").arg(cmd);
     }
     return ConnectionMode::Ssh;
 }
@@ -154,6 +154,10 @@ void addStandardOptions(QCommandLineParser& parser)
 
 void configureParser(QCommandLineParser& parser)
 {
+    // Keep compatibility with the documented `-name title` spelling. Without
+    // this mode Qt treats `-name` as short option `-n` with the value `ame`.
+    parser.setSingleDashWordOptionMode(QCommandLineParser::ParseAsLongOptions);
+
     parser.setApplicationDescription(
         QStringLiteral(
             "clientosh - SSH, SFTP, Telnet, and serial client\n"
@@ -172,10 +176,10 @@ void configureParser(QCommandLineParser& parser)
 
     parser.addPositionalArgument(
         QStringLiteral("command"),
-        QStringLiteral("Connection type: ssh, telnet, serial, or sftp."));
+        QStringLiteral("Connection type: ssh, telnet, sftp, or serial."));
     parser.addPositionalArgument(
         QStringLiteral("target"),
-        QStringLiteral("Remote host (see examples above)."));
+        QStringLiteral("Remote host or serial device (see examples above)."));
 
     parser.addOption(QCommandLineOption(
         {QStringLiteral("n"), QStringLiteral("name")},
@@ -250,6 +254,10 @@ Request parse(const QCommandLineParser& parser)
         profile.host = pos.at(1).trimmed();
         if (profile.host.isEmpty()) {
             req.error = QStringLiteral("serial device is required");
+            return req;
+        }
+        if (parser.isSet(QStringLiteral("port"))) {
+            req.error = QStringLiteral("--port is not valid with serial; use --baud");
             return req;
         }
         bool baudOk = false;

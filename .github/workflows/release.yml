@@ -366,8 +366,8 @@ jobs:
             <key>CFBundleIdentifier</key><string>io.github.clientosh</string>
             <key>CFBundleExecutable</key><string>clientosh</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>1.0.5</string>
-            <key>CFBundleVersion</key><string>1.0.5</string>
+            <key>CFBundleShortVersionString</key><string>1.0.6</string>
+            <key>CFBundleVersion</key><string>1.0.6</string>
             <key>LSMinimumSystemVersion</key><string>12.0</string>
             <key>NSHighResolutionCapable</key><true/>
           </dict>

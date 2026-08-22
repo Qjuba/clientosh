@@ -26,6 +26,9 @@ public:
     /** Open an ad-hoc session, e.g. one supplied on the command line. */
     void openSession(const SessionProfile& profile);
 
+    /** Open a session requested from the command line (after the window is shown). */
+    void launchFromCli(const SessionProfile& profile, bool openSftpWithSsh);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;

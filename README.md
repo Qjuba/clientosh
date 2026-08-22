@@ -12,10 +12,6 @@
   Terminal, SFTP, and Telnet live side-by-side in a <b>single window</b>. Drag, split, dock, detach. Zero fuss, real connections.
 </p>
 
-<p align="center">
-  <a href="https://github.com/hdmain/clientosh"><b>github.com/hdmain/clientosh</b></a>
-</p>
-
 <br/>
 
 <p align="center">
@@ -287,8 +283,7 @@ You can also open an ad-hoc terminal session directly from the command line. The
 /usr/bin/clientosh serial /dev/ttyUSB0 --baud 9600 -name console
 ```
 
-If the endpoint matches a saved profile of the same type, its credentials and key settings are reused. Otherwise SSH uses the default username configured in clientosh settings.
-When clientosh is already running, subsequent SSH/Telnet/serial commands add another tab to the existing window instead of starting another window.
+SSH uses the default username configured in clientosh settings when one is not supplied explicitly.
 
 > By default, saved credentials are *rejected* unless you explicitly opt in to store a password - secrets live only in the encrypted keyring vault, never in plaintext.
 
@@ -342,6 +337,90 @@ Enable verbose mode with **Settings → SFTP → verbose logging**.
 | Close panel | `Ctrl+W` |
 | Open SFTP | `Ctrl+Shift+S` |
 | Font bigger / smaller / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+
+### Command-line interface
+
+`clientosh` can be launched from the terminal to open a session immediately or to print help/version. With no arguments it opens the dashboard GUI.
+
+```text
+clientosh [options] <command> <target>
+```
+
+| Command | Description | Default port |
+|---|---|---|
+| `ssh` / `connect` | SSH terminal (+ optional SFTP with `--sftp`) | 22 |
+| `telnet` | Telnet terminal | 23 |
+| `sftp` | SFTP file manager only | 22 |
+| `serial` / `com` | Local Serial/COM terminal | — |
+
+**Target** (required for connect commands): `host`, `host:port`, `user@host`, `user@host:port`, IPv6 `[::1]:port`, or a serial device such as `COM3` or `/dev/ttyUSB0`.
+
+#### Help and version
+
+These print to the terminal and exit — no GUI window:
+
+```bash
+clientosh --help
+clientosh -h
+clientosh --version
+clientosh -v
+```
+
+On Windows, run from **PowerShell** or **cmd** (for example `.\build\clientosh.exe --help`).
+
+#### Quick connect examples
+
+```bash
+# Telnet
+clientosh telnet 192.168.0.1:23 -name Router
+clientosh telnet switch.local -u admin -name Core-SW
+
+# SSH
+clientosh ssh user@prod.example.com -name Production
+clientosh ssh 10.0.0.5:2222 -u admin -name Jump
+clientosh ssh host -i ~/.ssh/id_ed25519 -u root -name Root
+clientosh ssh user@host -p secret -name Lab
+
+# SSH + SFTP pane at once
+clientosh ssh deploy@files.example.com --sftp -name Deploy
+
+# SFTP only
+clientosh sftp user@files.example.com -name Files
+clientosh sftp backup.local:2222 -u backup -name Backups
+
+# Serial / COM
+clientosh serial COM3 --baud 115200 -name Console
+clientosh serial /dev/ttyUSB0 --baud 9600 -name Console
+
+# Windows (path to built binary)
+.\build\clientosh.exe telnet 192.168.0.1:23 -name Router
+.\build\clientosh.exe ssh user@10.0.0.5 -name Prod
+
+# Linux / macOS (installed binary)
+clientosh telnet router.lan:23 -name Router
+/usr/bin/clientosh ssh user@prod.example.com -name Production
+```
+
+Connect commands open the **GUI** and start the session in a new tab. Use `-name` / `-n` to set the tab title. Passwords from `-p` / `--password` are used for this session only and are **not** saved to the vault.
+
+For Telnet, username is optional (you can type credentials manually in the terminal). Serial sessions do not use authentication. For SSH and SFTP, provide `user@host` or `-u` / `--user`.
+
+#### Options
+
+| Option | Description |
+|---|---|
+| `-n`, `-name`, `--name` | Tab / pane title |
+| `-u`, `--user` | Username (overrides `user@` in target) |
+| `-P`, `--port` | Port (overrides `:port` in target) |
+| `-p`, `--password` | Password for this session only (not saved) |
+| `-i`, `--identity` | Private key file path |
+| `--keyring` | Saved keyring key id |
+| `--key-passphrase` | Passphrase for an encrypted private key |
+| `--sftp` | With `ssh`, also open an SFTP pane |
+| `--baud` | Serial baud rate (default: 115200) |
+| `--verbose` | Verbose SFTP logging (same as Settings → SFTP) |
+| `-h`, `--help`, `-?` | Print usage and exit |
+| `-v`, `--version` | Print version and exit |
 
 <br/>
 

@@ -3,6 +3,7 @@
 #include "SessionProfile.h"
 #include "SshSession.h"
 #include "TelnetSession.h"
+#include "SerialSession.h"
 
 #include <QObject>
 #include <QHash>
@@ -22,6 +23,7 @@ public:
         SessionProfile profile;
         SshSession* ssh = nullptr;
         TelnetSession* telnet = nullptr;
+        SerialSession* serial = nullptr;
         QString status = QStringLiteral("idle");
         bool connected = false;
 
@@ -70,8 +72,10 @@ private:
 
     void wireSshSession(LiveSession* live);
     void wireTelnetSession(LiveSession* live);
+    void wireSerialSession(LiveSession* live);
     void retireSsh(SshSession* ssh);
     void retireTelnet(TelnetSession* telnet);
+    void retireSerial(SerialSession* serial);
 
     QHash<QString, LiveSession*> m_sessions;
     QHash<QString, bool> m_detached;
@@ -79,4 +83,5 @@ private:
     QString m_activeId;
     QVector<SshSession*> m_retiringSsh;
     QVector<TelnetSession*> m_retiringTelnet;
+    QVector<SerialSession*> m_retiringSerial;
 };

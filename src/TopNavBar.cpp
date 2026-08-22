@@ -10,6 +10,7 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
+#include <QMenu>
 #include <QMetaObject>
 #include <QMimeData>
 #include <QSignalBlocker>
@@ -167,9 +168,18 @@ void TopNavBar::syncActiveChip()
         QLayoutItem* item = m_tabsLay->itemAt(i);
         auto* chip = item ? qobject_cast<SessionChip*>(item->widget()) : nullptr;
         if (chip) {
-            chip->setActive(chip->panelRef() == active);
+            chip->setActive(m_workspaceActive && chip->panelRef() == active);
         }
     }
+}
+
+void TopNavBar::setWorkspaceActive(bool active)
+{
+    if (m_workspaceActive == active) {
+        return;
+    }
+    m_workspaceActive = active;
+    syncActiveChip();
 }
 
 void TopNavBar::clearStatsDisplay()
@@ -238,7 +248,8 @@ void TopNavBar::syncStatsProbe()
     const QString id = m_sessions->activeId();
     const auto* live = m_sessions->session(id);
     const bool wantStats = AppSettings::showServerStats() && live && live->connected
-                           && !live->profile.isTelnet() && !live->profile.isSftpOnly();
+                           && !live->profile.isTelnet() && !live->profile.isSerial()
+                           && !live->profile.isSftpOnly();
 
     if (!wantStats) {
         if (!m_statsSessionId.isEmpty()) {
@@ -314,7 +325,7 @@ void TopNavBar::rebuildTabs()
         return;
     }
 
-    const PanelRef active = m_workspace->activePanel();
+    const PanelRef active = m_workspaceActive ? m_workspace->activePanel() : PanelRef{};
     for (const PanelRef& ref : m_workspace->openPanels()) {
         QString title;
         if (ref.kind == PanelKind::Sftp) {
@@ -334,6 +345,8 @@ void TopNavBar::rebuildTabs()
         connect(chip, &SessionChip::activated, this, &TopNavBar::panelSelectRequested);
         connect(chip, &SessionChip::closeRequested, this, &TopNavBar::panelCloseRequested);
         connect(chip, &SessionChip::hoverActivated, this, &TopNavBar::panelPreviewRequested);
+        connect(chip, &SessionChip::contextMenuRequested,
+                this, &TopNavBar::showPanelContextMenu);
         connect(chip, &SessionChip::dragFinished, m_workspace, &SessionWorkspace::flushPendingDock);
         connect(chip, &SessionChip::reorderRequested, this,
                 [this](const PanelRef& from, const PanelRef& before) {
@@ -346,6 +359,46 @@ void TopNavBar::rebuildTabs()
         m_tabsLay->addWidget(chip);
     }
     m_tabsLay->addStretch(1);
+}
+
+void TopNavBar::showPanelContextMenu(const PanelRef& ref, const QPoint& globalPos)
+{
+    if (!ref.isValid() || !m_workspace) {
+        return;
+    }
+    QMenu menu(this);
+    auto* save = menu.addAction(QStringLiteral("Save connection profile"));
+    connect(save, &QAction::triggered, this, [this, ref]() {
+        emit savePanelRequested(ref);
+    });
+
+    auto* split = menu.addMenu(QStringLiteral("Split screen"));
+    const bool canSplit = m_workspace->canSplitPanel(ref);
+    struct SplitChoice {
+        const char* label;
+        DockEdge edge;
+    };
+    const SplitChoice choices[] = {
+        {"Place left", DockEdge::Left},
+        {"Place right", DockEdge::Right},
+        {"Place above", DockEdge::Top},
+        {"Place below", DockEdge::Bottom},
+    };
+    for (const SplitChoice& choice : choices) {
+        auto* action = split->addAction(QLatin1String(choice.label));
+        action->setEnabled(canSplit);
+        connect(action, &QAction::triggered, this, [this, ref, edge = choice.edge]() {
+            m_workspace->splitPanel(ref, edge);
+        });
+    }
+    if (m_workspace->isPanelSplit(ref)) {
+        menu.addSeparator();
+        auto* unsplit = menu.addAction(QStringLiteral("Return to tab"));
+        connect(unsplit, &QAction::triggered, this, [this, ref]() {
+            m_workspace->unsplitPanel(ref);
+        });
+    }
+    menu.exec(globalPos);
 }
 
 void TopNavBar::dragEnterEvent(QDragEnterEvent* event)
@@ -379,6 +432,10 @@ void TopNavBar::dropEvent(QDropEvent* event)
         event->ignore();
         return;
     }
-    emit panelSelectRequested(ref);
+    // Dropping a pane/tab back on the tab strip removes it from a split. The
+    // workspace applies this after QDrag::exec exits to keep the drag source alive.
+    if (m_workspace) {
+        m_workspace->unsplitDrop(ref);
+    }
     event->acceptProposedAction();
 }

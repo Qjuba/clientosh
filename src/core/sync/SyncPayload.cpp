@@ -25,6 +25,11 @@ QJsonObject profileToJsonFull(const SessionProfile& p)
     const QString mode = connectionModeToString(p.connectionMode);
     o.insert(QStringLiteral("connectionMode"), mode);
     o.insert(QStringLiteral("system"), p.system);
+    o.insert(QStringLiteral("serialBaudRate"), p.serialBaudRate);
+    o.insert(QStringLiteral("serialDataBits"), p.serialDataBits);
+    o.insert(QStringLiteral("serialParity"), p.serialParity);
+    o.insert(QStringLiteral("serialStopBits"), p.serialStopBits);
+    o.insert(QStringLiteral("serialFlowControl"), p.serialFlowControl);
     return o;
 }
 
@@ -44,10 +49,15 @@ SessionProfile profileFromJsonFull(const QJsonObject& o)
     p.saveKeyPassphrase = o.value(QStringLiteral("saveKeyPassphrase")).toBool(false);
     const QString mode = o.value(QStringLiteral("connectionMode")).toString();
     p.connectionMode = connectionModeFromString(mode);
-    if (p.port <= 0) {
+    if (p.port <= 0 && !p.isSerial()) {
         p.port = p.isTelnet() ? 23 : 22;
     }
     p.system = o.value(QStringLiteral("system")).toString();
+    p.serialBaudRate = o.value(QStringLiteral("serialBaudRate")).toInt(115200);
+    p.serialDataBits = o.value(QStringLiteral("serialDataBits")).toInt(8);
+    p.serialParity = o.value(QStringLiteral("serialParity")).toString(QStringLiteral("none"));
+    p.serialStopBits = o.value(QStringLiteral("serialStopBits")).toInt(1);
+    p.serialFlowControl = o.value(QStringLiteral("serialFlowControl")).toString(QStringLiteral("none"));
     if (p.id.isEmpty()) {
         p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     }

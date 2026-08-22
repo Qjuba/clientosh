@@ -92,10 +92,6 @@ QRect DropOverlay::zoneRect(DockEdge edge) const
     const int h = height();
     const int edgeW = qMax(40, w / 4);
     const int edgeH = qMax(40, h / 4);
-    const int cx = w / 2;
-    const int cy = h / 2;
-    const int swapW = qMax(56, w / 3);
-    const int swapH = qMax(40, h / 3);
 
     switch (edge) {
     case DockEdge::Left:
@@ -106,8 +102,6 @@ QRect DropOverlay::zoneRect(DockEdge edge) const
         return QRect(0, 0, w, edgeH);
     case DockEdge::Bottom:
         return QRect(0, h - edgeH, w, edgeH);
-    case DockEdge::Swap:
-        return QRect(cx - swapW / 2, cy - swapH / 2, swapW, swapH);
     default:
         return {};
     }
@@ -115,11 +109,6 @@ QRect DropOverlay::zoneRect(DockEdge edge) const
 
 DockEdge DropOverlay::edgeAt(const QPoint& localPos) const
 {
-    const QRect swap = zoneRect(DockEdge::Swap);
-    if (swap.contains(localPos)) {
-        return DockEdge::Swap;
-    }
-
     const QRect left = zoneRect(DockEdge::Left);
     const QRect right = zoneRect(DockEdge::Right);
     const QRect top = zoneRect(DockEdge::Top);
@@ -155,10 +144,6 @@ DockEdge DropOverlay::edgeAt(const QPoint& localPos) const
 
     const qreal nx = localPos.x() / qMax(1.0, double(width()));
     const qreal ny = localPos.y() / qMax(1.0, double(height()));
-    if (nx > 0.28 && nx < 0.72 && ny > 0.28 && ny < 0.72) {
-        return DockEdge::Swap;
-    }
-
     const qreal dl = nx;
     const qreal dr = 1.0 - nx;
     const qreal dt = ny;
@@ -232,5 +217,4 @@ void DropOverlay::paintEvent(QPaintEvent*)
     drawZone(DockEdge::Right, QColor(0x9a, 0x9a, 0x9a, 95));
     drawZone(DockEdge::Top, QColor(0x9a, 0x9a, 0x9a, 95));
     drawZone(DockEdge::Bottom, QColor(0x9a, 0x9a, 0x9a, 95));
-    drawZone(DockEdge::Swap, QColor(0x9a, 0x9a, 0x9a, 110), QStringLiteral("swap"));
 }

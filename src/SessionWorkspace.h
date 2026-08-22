@@ -38,6 +38,14 @@ public:
     void removeSessionPanels(const QString& sessionId);
 
     void splitDrop(const PanelRef& moving, DockEdge edge, const PanelRef& target);
+    /** Queue moving a split pane back to a normal standalone tab. */
+    void unsplitDrop(const PanelRef& ref);
+    /** Move a split pane back to a standalone tab without closing its session. */
+    void unsplitPanel(const PanelRef& ref);
+    bool canSplitPanel(const PanelRef& ref) const;
+    bool isPanelSplit(const PanelRef& ref) const;
+    /** Split a panel relative to the active/nearest other panel. */
+    void splitPanel(const PanelRef& ref, DockEdge edge);
     /** Apply a dock queued by splitDrop — call after QDrag::exec returns. */
     void flushPendingDock();
 
@@ -70,7 +78,6 @@ private:
     void setRootWidget(QWidget* w);
     void insertPanel(PaneFrame* frame);
     void dockInto(PaneFrame* moving, DockEdge edge, PaneFrame* target);
-    void swapPanes(PaneFrame* a, PaneFrame* b);
     bool extractPane(PaneFrame* frame);
     void collapseSplitter(QSplitter* split, QWidget* remaining);
     void focusPane(PaneFrame* frame);
@@ -89,6 +96,7 @@ private:
 
     PanelRef m_pendingMoving;
     PanelRef m_pendingTarget;
+    PanelRef m_pendingUnsplit;
     DockEdge m_pendingEdge = DockEdge::None;
     bool m_pendingDock = false;
 };

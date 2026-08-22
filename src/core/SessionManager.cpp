@@ -36,6 +36,14 @@ SessionManager::~SessionManager()
         telnet->wait(8000);
         delete telnet;
     }
+    const QVector<SerialSession*> retiringSerial = m_retiringSerial;
+    m_retiringSerial.clear();
+    for (SerialSession* serial : retiringSerial) {
+        if (!serial) continue;
+        serial->disconnectFromHost();
+        serial->wait(3000);
+        delete serial;
+    }
 }
 
 QString SessionManager::connectedLabel(const SessionProfile& profile)
@@ -45,6 +53,9 @@ QString SessionManager::connectedLabel(const SessionProfile& profile)
     }
     if (profile.isTelnet()) {
         return QStringLiteral("connected · Telnet");
+    }
+    if (profile.isSerial()) {
+        return QStringLiteral("connected · Serial");
     }
     return QStringLiteral("connected · SSH");
 }
@@ -56,6 +67,9 @@ QString SessionManager::connectingLabel(const SessionProfile& profile)
     }
     if (profile.isTelnet()) {
         return QStringLiteral("connecting telnet…");
+    }
+    if (profile.isSerial()) {
+        return QStringLiteral("opening serial port…");
     }
     return QStringLiteral("connecting…");
 }
@@ -82,7 +96,10 @@ QString SessionManager::createSession(const SessionProfile& profile)
     live->profile = profile;
     live->status = QStringLiteral("preparing…");
 
-    if (profile.isTelnet()) {
+    if (profile.isSerial()) {
+        live->serial = new SerialSession(this);
+        wireSerialSession(live);
+    } else if (profile.isTelnet()) {
         live->telnet = new TelnetSession(this);
         wireTelnetSession(live);
     } else {
@@ -110,6 +127,11 @@ void SessionManager::connectSession(const QString& id, int cols, int rows)
 
     live->status = QStringLiteral("connecting...");
     emit sessionStatusChanged(id, live->status);
+
+    if (live->serial) {
+        live->serial->connectTo(live->profile);
+        return;
+    }
 
     if (live->telnet) {
         live->telnet->resizePty(cols, rows);
@@ -260,6 +282,49 @@ void SessionManager::wireTelnetSession(LiveSession* live)
     });
 }
 
+void SessionManager::wireSerialSession(LiveSession* live)
+{
+    const QString id = live->id;
+    connect(live->serial, &SerialSession::connected, this, [this, id]() {
+        if (auto* s = session(id)) {
+            s->connected = true;
+            s->status = connectedLabel(s->profile);
+            emit sessionConnectionChanged(id, true);
+            emit sessionStatusChanged(id, s->status);
+        }
+    });
+    connect(live->serial, &SerialSession::disconnected, this, [this, id]() {
+        if (auto* s = session(id)) {
+            s->connected = false;
+            s->status = QStringLiteral("disconnected");
+            emit sessionConnectionChanged(id, false);
+            emit sessionStatusChanged(id, s->status);
+            emit sessionDataReceived(id, QByteArray("\r\n[serial port closed]\r\n"));
+        }
+    });
+    connect(live->serial, &SerialSession::dataReceived, this, [this, id](const QByteArray& data) {
+        if (session(id)) emit sessionDataReceived(id, data);
+    });
+    connect(live->serial, &SerialSession::errorOccurred, this, [this, id](const QString& message) {
+        if (auto* s = session(id)) {
+            s->connected = false;
+            s->status = message;
+            emit sessionConnectionChanged(id, false);
+            emit sessionStatusChanged(id, message);
+            emit sessionError(id, message);
+            emit sessionDataReceived(id, (QStringLiteral("\r\n[error] ") + message
+                                          + QStringLiteral("\r\n")).toUtf8());
+        }
+    });
+    connect(live->serial, &SerialSession::statusChanged, this, [this, id](const QString& status) {
+        if (auto* s = session(id)) {
+            s->status = status.startsWith(QLatin1String("connected "))
+                ? connectedLabel(s->profile) : status;
+            emit sessionStatusChanged(id, s->status);
+        }
+    });
+}
+
 void SessionManager::retireSsh(SshSession* ssh)
 {
     if (!ssh) {
@@ -304,6 +369,23 @@ void SessionManager::retireTelnet(TelnetSession* telnet)
     telnet->disconnectFromHost();
 }
 
+void SessionManager::retireSerial(SerialSession* serial)
+{
+    if (!serial) return;
+    QObject::disconnect(serial, nullptr, this, nullptr);
+    serial->setParent(nullptr);
+    if (!serial->isRunning()) {
+        serial->deleteLater();
+        return;
+    }
+    m_retiringSerial.push_back(serial);
+    connect(serial, &QThread::finished, this, [this, serial]() {
+        m_retiringSerial.removeAll(serial);
+        serial->deleteLater();
+    });
+    serial->disconnectFromHost();
+}
+
 void SessionManager::closeSession(const QString& id)
 {
     LiveSession* live = m_sessions.take(id);
@@ -315,8 +397,10 @@ void SessionManager::closeSession(const QString& id)
 
     retireSsh(live->ssh);
     retireTelnet(live->telnet);
+    retireSerial(live->serial);
     live->ssh = nullptr;
     live->telnet = nullptr;
+    live->serial = nullptr;
     delete live;
 
     if (m_activeId == id) {
@@ -338,6 +422,9 @@ void SessionManager::disconnectSession(const QString& id)
         if (s->telnet) {
             s->telnet->disconnectFromHost();
         }
+        if (s->serial) {
+            s->serial->disconnectFromHost();
+        }
     }
 }
 
@@ -348,6 +435,8 @@ void SessionManager::sendData(const QString& id, const QByteArray& data)
             s->ssh->sendData(data);
         } else if (s->telnet) {
             s->telnet->sendData(data);
+        } else if (s->serial) {
+            s->serial->sendData(data);
         }
     }
 }

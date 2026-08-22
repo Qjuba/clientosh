@@ -44,6 +44,8 @@ public:
     void showHome();
     void appendLog(const QString& line);
     void syncTerminalFontSizeUi(int points);
+    /** Persist a currently open terminal/SFTP profile if it is not saved yet. */
+    void saveSessionProfile(const SessionProfile& profile);
 
 signals:
     void openProfile(const SessionProfile& profile);
@@ -96,6 +98,9 @@ private:
     void openSavedProfile(const QString& profileId);
     void sftpSavedProfile(const QString& profileId);
     void deleteSavedProfile(const QString& profileId);
+    void saveLiveSession(const QString& sessionId);
+    void showLiveSessionContextMenu(const QPoint& globalPos, const QString& sessionId);
+    bool isProfileSaved(const SessionProfile& profile) const;
     void setProfileSystem(const QString& profileId, const QString& system);
     void saveCurrentFormAsProfile();
     void connectFromForm();
@@ -163,7 +168,18 @@ private:
     QLineEdit* m_hostEdit = nullptr;
     QSpinBox* m_portSpin = nullptr;
     QLineEdit* m_userEdit = nullptr;
+    QWidget* m_networkFieldsPanel = nullptr;
+    QWidget* m_serialFieldsPanel = nullptr;
+    QComboBox* m_serialPortCombo = nullptr;
+    QComboBox* m_serialBaudCombo = nullptr;
+    QComboBox* m_serialDataBitsCombo = nullptr;
+    QComboBox* m_serialParityCombo = nullptr;
+    QComboBox* m_serialStopBitsCombo = nullptr;
+    QComboBox* m_serialFlowCombo = nullptr;
     QComboBox* m_authMethodCombo = nullptr;
+    QWidget* m_authSectionTitle = nullptr;
+    QWidget* m_authSectionRule = nullptr;
+    QWidget* m_authMethodLabel = nullptr;
     QWidget* m_authPasswordPanel = nullptr;
     QWidget* m_authKeyringPanel = nullptr;
     QWidget* m_authKeyFilePanel = nullptr;
@@ -213,6 +229,7 @@ private:
     QCheckBox* m_settingsSftpVerbose = nullptr;
     QCheckBox* m_settingsHighlightAddresses = nullptr;
     QCheckBox* m_settingsHighlightKeywords = nullptr;
+    QCheckBox* m_settingsHighlightCiscoCli = nullptr;
 
     QCheckBox* m_settingsCtrlScrollZoom = nullptr;
     QSlider* m_settingsScrollSensitivity = nullptr;

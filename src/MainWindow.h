@@ -35,6 +35,7 @@ private:
     void setupShortcuts();
     void rebindShortcuts();
     void adjustAllTerminalFonts(int deltaOrAbsolute, bool absolute);
+    void toggleDashboard();
     void showDashboard();
     void showWorkspace();
     void openProfileSession(const SessionProfile& profile);
@@ -45,6 +46,7 @@ private:
     void openOrFocusSession(const QString& id);
     void openOrFocusPanel(const PanelRef& ref);
     void closePanel(const PanelRef& ref);
+    void savePanelProfile(const PanelRef& ref);
     void closeLiveSession(const QString& id);
     void openSftp(const QString& id);
     void openStandaloneSftp(const SessionProfile& profile);

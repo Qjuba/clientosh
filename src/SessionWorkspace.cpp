@@ -155,7 +155,16 @@ PaneFrame* SessionWorkspace::ensurePane(const PanelRef& ref, QWidget* content, c
             emit sessionSelectRequested(r.sessionId);
         }
     });
-    connect(frame, &PaneFrame::closeRequested, this, &SessionWorkspace::panelCloseRequested);
+    connect(frame, &PaneFrame::closeRequested, this, [this, frame](const PanelRef& ref) {
+        // In a split, the pane-header close button means "remove from split".
+        // The session remains available as a normal tab. Closing that tab from
+        // the top navigation still performs the real disconnect.
+        if (qobject_cast<QSplitter*>(frame->parentWidget())) {
+            unsplitPanel(ref);
+        } else {
+            emit panelCloseRequested(ref);
+        }
+    });
     connect(frame, &PaneFrame::panelDropRequested, this,
             [this](const PanelRef& moving, DockEdge edge, const PanelRef& target) {
                 splitDrop(moving, edge, target);
@@ -397,86 +406,6 @@ void SessionWorkspace::dockInto(PaneFrame* moving, DockEdge edge, PaneFrame* tar
     notifyLayoutChanged();
 }
 
-void SessionWorkspace::swapPanes(PaneFrame* a, PaneFrame* b)
-{
-    if (!a || !b || a == b) {
-        return;
-    }
-    if (!widgetInTree(a, m_layoutRoot) || !widgetInTree(b, m_layoutRoot)) {
-        return;
-    }
-
-    auto* splitA = qobject_cast<QSplitter*>(a->parentWidget());
-    auto* splitB = qobject_cast<QSplitter*>(b->parentWidget());
-    const int idxA = splitA ? splitA->indexOf(a) : -1;
-    const int idxB = splitB ? splitB->indexOf(b) : -1;
-    const bool aIsRoot = (a == m_layoutRoot);
-    const bool bIsRoot = (b == m_layoutRoot);
-
-    if (splitA && splitB && idxA >= 0 && idxB >= 0) {
-        if (splitA == splitB) {
-            // Same splitter: reinsert both at swapped indices.
-            a->setParent(nullptr);
-            b->setParent(nullptr);
-            const int lo = qMin(idxA, idxB);
-            const int hi = qMax(idxA, idxB);
-            if (idxA < idxB) {
-                splitA->insertWidget(lo, b);
-                splitA->insertWidget(hi, a);
-            } else {
-                splitA->insertWidget(lo, a);
-                splitA->insertWidget(hi, b);
-            }
-        } else {
-            // Cross-splitter swap via temporary placeholder.
-            auto* placeholder = new QWidget;
-            splitA->replaceWidget(idxA, placeholder);
-            splitB->replaceWidget(idxB, a);
-            const int phIdx = splitA->indexOf(placeholder);
-            if (phIdx >= 0) {
-                splitA->replaceWidget(phIdx, b);
-            } else {
-                splitA->addWidget(b);
-            }
-            placeholder->deleteLater();
-        }
-        a->show();
-        b->show();
-        focusPane(a);
-        notifyLayoutChanged();
-        return;
-    }
-
-    // One pane is the sole layout root; the other sits in a splitter.
-    if (aIsRoot && splitB && idxB >= 0) {
-        auto* lay = qobject_cast<QVBoxLayout*>(m_rootHost->layout());
-        if (lay) {
-            lay->removeWidget(a);
-        }
-        m_layoutRoot = nullptr;
-        splitB->replaceWidget(idxB, a);
-        setRootWidget(b);
-        a->show();
-        b->show();
-        focusPane(a);
-        notifyLayoutChanged();
-        return;
-    }
-    if (bIsRoot && splitA && idxA >= 0) {
-        auto* lay = qobject_cast<QVBoxLayout*>(m_rootHost->layout());
-        if (lay) {
-            lay->removeWidget(b);
-        }
-        m_layoutRoot = nullptr;
-        splitA->replaceWidget(idxA, b);
-        setRootWidget(a);
-        a->show();
-        b->show();
-        focusPane(a);
-        notifyLayoutChanged();
-    }
-}
-
 void SessionWorkspace::insertPanel(PaneFrame* frame)
 {
     if (!frame) {
@@ -696,11 +625,93 @@ void SessionWorkspace::splitDrop(const PanelRef& moving, DockEdge edge, const Pa
     m_pendingMoving = moving;
     m_pendingTarget = target;
     m_pendingEdge = edge;
+    m_pendingUnsplit = {};
     m_pendingDock = true;
+}
+
+void SessionWorkspace::unsplitDrop(const PanelRef& ref)
+{
+    if (!ref.isValid() || !pane(ref)) {
+        return;
+    }
+    // As with splitDrop, do not reparent the drag source until QDrag::exec exits.
+    m_pendingDock = false;
+    m_pendingMoving = {};
+    m_pendingTarget = {};
+    m_pendingEdge = DockEdge::None;
+    m_pendingUnsplit = ref;
+}
+
+void SessionWorkspace::unsplitPanel(const PanelRef& ref)
+{
+    PaneFrame* frame = pane(ref);
+    if (!frame) {
+        return;
+    }
+
+    if (qobject_cast<QSplitter*>(frame->parentWidget())) {
+        extractPane(frame);
+    }
+    activatePanel(frame);
+    notifyLayoutChanged();
+    emit panelSelectRequested(ref);
+    if (ref.kind == PanelKind::Terminal) {
+        emit sessionSelectRequested(ref.sessionId);
+    }
+}
+
+bool SessionWorkspace::canSplitPanel(const PanelRef& ref) const
+{
+    return ref.isValid() && pane(ref) && m_panes.size() > 1;
+}
+
+bool SessionWorkspace::isPanelSplit(const PanelRef& ref) const
+{
+    PaneFrame* frame = pane(ref);
+    return frame && qobject_cast<QSplitter*>(frame->parentWidget());
+}
+
+void SessionWorkspace::splitPanel(const PanelRef& ref, DockEdge edge)
+{
+    if (!canSplitPanel(ref) || !isSplitEdge(edge)) {
+        return;
+    }
+    PaneFrame* moving = pane(ref);
+    PaneFrame* target = pane(m_active);
+    if (!target || target == moving) {
+        // Prefer another panel already visible in the current layout.
+        for (const QString& key : m_tabOrder) {
+            PaneFrame* candidate = pane(PanelRef::fromKey(key));
+            if (candidate && candidate != moving && widgetInTree(candidate, m_layoutRoot)) {
+                target = candidate;
+                break;
+            }
+        }
+    }
+    if (!target || target == moving) {
+        // Otherwise use the most recently opened other tab.
+        for (auto it = m_tabOrder.crbegin(); it != m_tabOrder.crend(); ++it) {
+            PaneFrame* candidate = pane(PanelRef::fromKey(*it));
+            if (candidate && candidate != moving) {
+                target = candidate;
+                break;
+            }
+        }
+    }
+    if (!target || target == moving) {
+        return;
+    }
+    applyDock(ref, edge, target->panelRef());
 }
 
 void SessionWorkspace::flushPendingDock()
 {
+    if (m_pendingUnsplit.isValid()) {
+        const PanelRef ref = m_pendingUnsplit;
+        m_pendingUnsplit = {};
+        unsplitPanel(ref);
+        return;
+    }
     if (!m_pendingDock) {
         return;
     }
@@ -729,17 +740,7 @@ void SessionWorkspace::applyDock(const PanelRef& moving, DockEdge edge, const Pa
         }
     }
 
-    if (edge == DockEdge::Swap) {
-        if (!widgetInTree(movingPane, m_layoutRoot)) {
-            showPanel(moving);
-            movingPane = pane(moving);
-            targetPane = pane(target);
-            if (!movingPane || !targetPane) {
-                return;
-            }
-        }
-        swapPanes(movingPane, targetPane);
-    } else if (isSplitEdge(edge)) {
+    if (isSplitEdge(edge)) {
         dockInto(movingPane, edge, targetPane);
     }
 

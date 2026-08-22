@@ -3,6 +3,7 @@
 
 #include <QApplication>
 #include <QDrag>
+#include <QContextMenuEvent>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QEnterEvent>
@@ -182,6 +183,12 @@ void SessionChip::mouseReleaseEvent(QMouseEvent* event)
         return;
     }
     QFrame::mouseReleaseEvent(event);
+}
+
+void SessionChip::contextMenuEvent(QContextMenuEvent* event)
+{
+    emit contextMenuRequested(m_ref, event->globalPos());
+    event->accept();
 }
 
 PanelRef SessionChip::panelFromMime(const QMimeData* mime) const

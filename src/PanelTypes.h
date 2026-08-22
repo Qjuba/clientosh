@@ -16,7 +16,6 @@ enum class DockEdge {
     Right,
     Top,
     Bottom,
-    Swap,
     None
 };
 

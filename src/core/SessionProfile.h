@@ -14,7 +14,8 @@
 enum class ConnectionMode {
     Ssh = 0,     // interactive terminal + optional SFTP
     SftpOnly = 1, // open SFTP file manager only
-    Telnet = 2   // raw telnet terminal (no SFTP)
+    Telnet = 2,   // raw telnet terminal (no SFTP)
+    Serial = 3    // local serial/COM terminal
 };
 
 struct SessionProfile {
@@ -30,6 +31,11 @@ struct SessionProfile {
     QString keyPassphrase;  // for encrypted keys (not persisted by default)
     bool saveKeyPassphrase = false;
     ConnectionMode connectionMode = ConnectionMode::Ssh;
+    int serialBaudRate = 115200;
+    int serialDataBits = 8;
+    QString serialParity = QStringLiteral("none");
+    int serialStopBits = 1;
+    QString serialFlowControl = QStringLiteral("none");
     QString system; // OS detected from the SSH banner on last connect (e.g. "Linux", "Ubuntu").
 
     bool usesPrivateKey() const
@@ -53,9 +59,12 @@ struct SessionProfile {
         return connectionMode == ConnectionMode::Telnet;
     }
 
+    bool isSerial() const { return connectionMode == ConnectionMode::Serial; }
+
     bool isTerminal() const
     {
-        return connectionMode == ConnectionMode::Ssh || connectionMode == ConnectionMode::Telnet;
+        return connectionMode == ConnectionMode::Ssh || connectionMode == ConnectionMode::Telnet
+            || connectionMode == ConnectionMode::Serial;
     }
 
     QString connectionTypeLabel() const
@@ -65,6 +74,9 @@ struct SessionProfile {
         }
         if (isTelnet()) {
             return QStringLiteral("Telnet");
+        }
+        if (isSerial()) {
+            return QStringLiteral("Serial");
         }
         return QStringLiteral("SSH");
     }
@@ -83,6 +95,9 @@ struct SessionProfile {
 
     QString endpoint() const
     {
+        if (isSerial()) {
+            return QStringLiteral("%1 @ %2 baud").arg(host).arg(serialBaudRate);
+        }
         return QStringLiteral("%1:%2").arg(host).arg(port);
     }
 };
@@ -98,6 +113,10 @@ inline ConnectionMode connectionModeFromString(const QString& value)
     if (value.compare(QLatin1String("telnet"), Qt::CaseInsensitive) == 0) {
         return ConnectionMode::Telnet;
     }
+    if (value.compare(QLatin1String("serial"), Qt::CaseInsensitive) == 0
+        || value.compare(QLatin1String("com"), Qt::CaseInsensitive) == 0) {
+        return ConnectionMode::Serial;
+    }
     return ConnectionMode::Ssh;
 }
 
@@ -108,6 +127,8 @@ inline QString connectionModeToString(ConnectionMode mode)
         return QStringLiteral("sftp");
     case ConnectionMode::Telnet:
         return QStringLiteral("telnet");
+    case ConnectionMode::Serial:
+        return QStringLiteral("serial");
     case ConnectionMode::Ssh:
     default:
         return QStringLiteral("ssh");
@@ -140,6 +161,11 @@ inline QVector<SessionProfile> profilesFromQSettings()
         }
         p.connectionMode = connectionModeFromString(
             s.value(QStringLiteral("connectionMode"), QStringLiteral("ssh")).toString());
+        p.serialBaudRate = s.value(QStringLiteral("serialBaudRate"), 115200).toInt();
+        p.serialDataBits = s.value(QStringLiteral("serialDataBits"), 8).toInt();
+        p.serialParity = s.value(QStringLiteral("serialParity"), QStringLiteral("none")).toString();
+        p.serialStopBits = s.value(QStringLiteral("serialStopBits"), 1).toInt();
+        p.serialFlowControl = s.value(QStringLiteral("serialFlowControl"), QStringLiteral("none")).toString();
         if (p.id.isEmpty()) {
             p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         }
@@ -166,6 +192,11 @@ inline QJsonObject profileToJson(const SessionProfile& p)
     o.insert(QStringLiteral("saveKeyPassphrase"), p.saveKeyPassphrase);
     o.insert(QStringLiteral("connectionMode"), connectionModeToString(p.connectionMode));
     o.insert(QStringLiteral("system"), p.system);
+    o.insert(QStringLiteral("serialBaudRate"), p.serialBaudRate);
+    o.insert(QStringLiteral("serialDataBits"), p.serialDataBits);
+    o.insert(QStringLiteral("serialParity"), p.serialParity);
+    o.insert(QStringLiteral("serialStopBits"), p.serialStopBits);
+    o.insert(QStringLiteral("serialFlowControl"), p.serialFlowControl);
     return o;
 }
 
@@ -184,6 +215,11 @@ inline SessionProfile profileFromJson(const QJsonObject& o)
     p.connectionMode = connectionModeFromString(
         o.value(QStringLiteral("connectionMode")).toString(QStringLiteral("ssh")));
     p.system = o.value(QStringLiteral("system")).toString();
+    p.serialBaudRate = o.value(QStringLiteral("serialBaudRate")).toInt(115200);
+    p.serialDataBits = o.value(QStringLiteral("serialDataBits")).toInt(8);
+    p.serialParity = o.value(QStringLiteral("serialParity")).toString(QStringLiteral("none"));
+    p.serialStopBits = o.value(QStringLiteral("serialStopBits")).toInt(1);
+    p.serialFlowControl = o.value(QStringLiteral("serialFlowControl")).toString(QStringLiteral("none"));
     // Leave empty ids empty here — loadProfiles() assigns and persists once.
     return p;
 }

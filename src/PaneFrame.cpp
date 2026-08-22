@@ -103,7 +103,7 @@ PaneFrame::PaneFrame(const PanelRef& ref, QWidget* content, QWidget* parent)
     m_closeBtn->setFocusPolicy(Qt::NoFocus);
     m_closeBtn->setObjectName(QStringLiteral("sessionChipClose"));
     m_closeBtn->setCursor(Qt::PointingHandCursor);
-    m_closeBtn->setToolTip(QStringLiteral("close pane"));
+    m_closeBtn->setToolTip(QStringLiteral("return split pane to tab · close when standalone"));
     static_cast<Motion::HoverFillButton*>(m_closeBtn)->setHoverFill(QColor(0x50, 0x50, 0x50));
 
     hLay->addWidget(m_title, 1);

@@ -34,7 +34,14 @@ QString profileContentKey(const SessionProfile& p)
     if (host.isEmpty() && user.isEmpty()) {
         return {};
     }
-    return host + QLatin1Char('\n') + QString::number(p.port) + QLatin1Char('\n') + user;
+    const QString mode = connectionModeToString(p.connectionMode);
+    const QString serial = p.isSerial()
+        ? QStringLiteral("\n%1\n%2\n%3\n%4\n%5")
+              .arg(p.serialBaudRate).arg(p.serialDataBits, 0, 10)
+              .arg(p.serialParity).arg(p.serialStopBits).arg(p.serialFlowControl)
+        : QString();
+    return mode + QLatin1Char('\n') + host + QLatin1Char('\n') + QString::number(p.port)
+        + QLatin1Char('\n') + user + serial;
 }
 
 QString keyContentKey(const StoredKey& k)

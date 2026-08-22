@@ -9,6 +9,7 @@ class QToolButton;
 class QPushButton;
 class QMimeData;
 class QVariantAnimation;
+class QContextMenuEvent;
 
 class SessionChip : public QFrame
 {
@@ -35,6 +36,7 @@ signals:
     void closeRequested(const PanelRef& ref);
     void reorderRequested(const PanelRef& from, const PanelRef& before);
     void hoverActivated(const PanelRef& ref); // drag-hover over this tab → show viewport
+    void contextMenuRequested(const PanelRef& ref, const QPoint& globalPos);
     void dragFinished(); // after QDrag::exec — safe to mutate layout / flush docks
 
 protected:
@@ -44,6 +46,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragMoveEvent(QDragMoveEvent* event) override;
     void dropEvent(QDropEvent* event) override;

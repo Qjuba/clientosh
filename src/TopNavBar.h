@@ -26,6 +26,8 @@ public:
     void syncActiveChip();
     void applySettings();
     void setAlwaysOnTopChecked(bool on);
+    /** Controls tab highlighting without changing the active live session. */
+    void setWorkspaceActive(bool active);
 
 signals:
     void dashboardRequested();
@@ -33,6 +35,7 @@ signals:
     void panelSelectRequested(const PanelRef& ref);
     void panelCloseRequested(const PanelRef& ref);
     void panelPreviewRequested(const PanelRef& ref);
+    void savePanelRequested(const PanelRef& ref);
     void sftpRequested();
     void alwaysOnTopToggled(bool on);
 
@@ -47,6 +50,7 @@ private:
     void applyStats(const ServerStats& stats);
     void clearStatsDisplay();
     void hideStatsUntilData();
+    void showPanelContextMenu(const PanelRef& ref, const QPoint& globalPos);
 
     SessionManager* m_sessions = nullptr;
     SessionWorkspace* m_workspace = nullptr;
@@ -58,6 +62,7 @@ private:
     QToolButton* m_sftpBtn = nullptr;
     QLabel* m_stats = nullptr;
     bool m_statsHaveData = false;
+    bool m_workspaceActive = false;
 
     QThread* m_statsThread = nullptr;
     ServerStatsClient* m_statsClient = nullptr;

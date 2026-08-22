@@ -4,6 +4,7 @@
 #include "core/AppSettings.h"
 #include "core/FontManager.h"
 #include "core/SessionManager.h"
+#include "core/SerialSession.h"
 #include "core/sync/SyncConfig.h"
 #include "core/sync/SyncController.h"
 #include "core/sync/SyncKey.h"
@@ -29,6 +30,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontDatabase>
+#include <QFontMetrics>
 #include <QInputDialog>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -241,7 +243,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_savedTree->header()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
     m_savedTree->header()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     m_savedTree->header()->setSectionResizeMode(4, QHeaderView::Fixed);
-    m_savedTree->setColumnWidth(4, 0);
+    m_savedTree->setColumnWidth(4, 34);
     m_savedTree->setRootIsDecorated(true);
     m_savedTree->setIndentation(18);
     m_savedTree->setSelectionMode(QAbstractItemView::SingleSelection);
@@ -253,26 +255,33 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
             [this](const QPoint& pos) {
                 auto* item = m_savedTree->itemAt(pos);
                 if (item && item->parent()) {
-                    // Host row
+                    const QString rowKind = item->data(0, Qt::UserRole + 1).toString();
                     const QString id = item->data(0, Qt::UserRole).toString();
-                    showHostContextMenu(m_savedTree->viewport()->mapToGlobal(pos), id);
+                    if (rowKind == QLatin1String("live")) {
+                        showLiveSessionContextMenu(m_savedTree->viewport()->mapToGlobal(pos), id);
+                    } else {
+                        showHostContextMenu(m_savedTree->viewport()->mapToGlobal(pos), id);
+                    }
                 } else if (item) {
-                    // Tag header
-                    const QString tag = item->data(0, Qt::UserRole).toString();
-                    showTagContextMenu(m_savedTree->viewport()->mapToGlobal(pos), tag);
+                    if (item->data(0, Qt::UserRole + 1).toString() != QLatin1String("live-header")) {
+                        const QString tag = item->data(0, Qt::UserRole).toString();
+                        showTagContextMenu(m_savedTree->viewport()->mapToGlobal(pos), tag);
+                    }
                 } else {
                     // Empty area → Add Tag
                     showPageContextMenu(m_savedTree->viewport()->mapToGlobal(pos));
                 }
             });
     connect(m_savedTree, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* it) {
-        if (it->parent() == nullptr) {
+        if (it->parent() == nullptr
+            && it->data(0, Qt::UserRole + 1).toString() != QLatin1String("live-header")) {
             m_tagCollapsed.removeAll(it->data(0, Qt::UserRole).toString());
             AppSettings::setTagCollapsed(m_tagCollapsed);
         }
     });
     connect(m_savedTree, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* it) {
-        if (it->parent() == nullptr) {
+        if (it->parent() == nullptr
+            && it->data(0, Qt::UserRole + 1).toString() != QLatin1String("live-header")) {
             const QString tag = it->data(0, Qt::UserRole).toString();
             if (!m_tagCollapsed.contains(tag)) {
                 m_tagCollapsed.append(tag);
@@ -541,6 +550,11 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         m_settingsHighlightAddresses = new QCheckBox(QStringLiteral("Colorize IP and MAC addresses"), sec);
         m_settingsHighlightKeywords = new QCheckBox(
             QStringLiteral("Colorize log keywords (ERROR, WARN, OK, INFO, DEBUG)"), sec);
+        m_settingsHighlightCiscoCli = new QCheckBox(
+            QStringLiteral("Colorize Cisco CLI insights (interfaces, states, routing)"), sec);
+        m_settingsHighlightCiscoCli->setToolTip(QStringLiteral(
+            "Highlights Cisco interface names, operational states, routing protocols, "
+            "configuration prompts, and common faults."));
 
         secLay->addWidget(uiPreview);
         secLay->addWidget(m_settingsTermPreview);
@@ -548,6 +562,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         secLay->addSpacing(8);
         secLay->addWidget(m_settingsHighlightAddresses);
         secLay->addWidget(m_settingsHighlightKeywords);
+        secLay->addWidget(m_settingsHighlightCiscoCli);
         secLay->addSpacing(8);
         auto* resetAppearanceBtn = new QPushButton(QStringLiteral("Reset appearance to defaults"), sec);
         resetAppearanceBtn->setObjectName(QStringLiteral("dashSecondary"));
@@ -628,6 +643,9 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
             persistAppearanceLive();
         });
         connect(m_settingsHighlightKeywords, &QCheckBox::toggled, this, [this](bool) {
+            persistAppearanceLive();
+        });
+        connect(m_settingsHighlightCiscoCli, &QCheckBox::toggled, this, [this](bool) {
             persistAppearanceLive();
         });
 
@@ -1169,6 +1187,8 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
                                    static_cast<int>(ConnectionMode::Ssh));
     m_connectionModeCombo->addItem(QStringLiteral("Telnet - terminal"),
                                    static_cast<int>(ConnectionMode::Telnet));
+    m_connectionModeCombo->addItem(QStringLiteral("Serial / COM - terminal"),
+                                   static_cast<int>(ConnectionMode::Serial));
     m_connectionModeCombo->addItem(QStringLiteral("SFTP only - file manager"),
                                    static_cast<int>(ConnectionMode::SftpOnly));
 
@@ -1186,7 +1206,11 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     addLabeled(formLay, QStringLiteral("Display name (optional)"), m_nameEdit);
     addLabeled(formLay, QStringLiteral("Type"), m_connectionModeCombo);
 
-    auto* hostPortRow = new QWidget(formInner);
+    m_networkFieldsPanel = new QWidget(formInner);
+    auto* networkLay = new QVBoxLayout(m_networkFieldsPanel);
+    networkLay->setContentsMargins(0, 0, 0, 0);
+    networkLay->setSpacing(10);
+    auto* hostPortRow = new QWidget(m_networkFieldsPanel);
     auto* hostPortLay = new QHBoxLayout(hostPortRow);
     hostPortLay->setContentsMargins(0, 0, 0, 0);
     hostPortLay->setSpacing(10);
@@ -1206,19 +1230,94 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     portCol->addWidget(m_portSpin);
     hostPortLay->addLayout(hostCol, 1);
     hostPortLay->addLayout(portCol, 0);
-    formLay->addWidget(hostPortRow);
+    networkLay->addWidget(hostPortRow);
+    addLabeled(networkLay, QStringLiteral("User"), m_userEdit);
+    formLay->addWidget(m_networkFieldsPanel);
 
-    addLabeled(formLay, QStringLiteral("User"), m_userEdit);
+    m_serialFieldsPanel = new QWidget(formInner);
+    auto* serialLay = new QVBoxLayout(m_serialFieldsPanel);
+    serialLay->setContentsMargins(0, 0, 0, 0);
+    serialLay->setSpacing(8);
+    m_serialPortCombo = new QComboBox(m_serialFieldsPanel);
+    m_serialPortCombo->setEditable(true);
+    m_serialPortCombo->setInsertPolicy(QComboBox::NoInsert);
+    auto refreshSerialPorts = [this]() {
+        const QString previous = m_serialPortCombo->currentText().trimmed();
+        m_serialPortCombo->clear();
+        m_serialPortCombo->addItems(SerialSession::availablePorts());
+        const int index = m_serialPortCombo->findText(previous);
+        if (!previous.isEmpty()) m_serialPortCombo->setCurrentText(previous);
+        else if (index >= 0) m_serialPortCombo->setCurrentIndex(index);
+#ifdef Q_OS_WIN
+        else if (m_serialPortCombo->count() == 0) m_serialPortCombo->setCurrentText(QStringLiteral("COM1"));
+#endif
+    };
+    auto* serialPortRow = new QWidget(m_serialFieldsPanel);
+    auto* serialPortRowLay = new QHBoxLayout(serialPortRow);
+    serialPortRowLay->setContentsMargins(0, 0, 0, 0);
+    serialPortRowLay->setSpacing(6);
+    auto* refreshPortsBtn = new QPushButton(QStringLiteral("Refresh"), serialPortRow);
+    refreshPortsBtn->setObjectName(QStringLiteral("dashButton"));
+    refreshPortsBtn->setFocusPolicy(Qt::NoFocus);
+    serialPortRowLay->addWidget(m_serialPortCombo, 1);
+    serialPortRowLay->addWidget(refreshPortsBtn);
+    addLabeled(serialLay, QStringLiteral("Serial port"), serialPortRow);
+    connect(refreshPortsBtn, &QPushButton::clicked, this, refreshSerialPorts);
+    refreshSerialPorts();
+
+    auto* serialSettingsRow = new QWidget(m_serialFieldsPanel);
+    auto* serialSettingsLay = new QHBoxLayout(serialSettingsRow);
+    serialSettingsLay->setContentsMargins(0, 0, 0, 0);
+    serialSettingsLay->setSpacing(8);
+    auto addSerialCombo = [&](const QString& label, QComboBox** combo, const QStringList& values) {
+        auto* column = new QVBoxLayout;
+        column->setContentsMargins(0, 0, 0, 0);
+        column->setSpacing(4);
+        auto* lab = new QLabel(label, m_serialFieldsPanel);
+        lab->setObjectName(QStringLiteral("fieldLabel"));
+        *combo = new QComboBox(m_serialFieldsPanel);
+        (*combo)->addItems(values);
+        column->addWidget(lab);
+        column->addWidget(*combo);
+        serialSettingsLay->addLayout(column, 1);
+    };
+    addSerialCombo(QStringLiteral("Baud"), &m_serialBaudCombo,
+                   {QStringLiteral("1200"), QStringLiteral("2400"), QStringLiteral("4800"),
+                    QStringLiteral("9600"), QStringLiteral("19200"), QStringLiteral("38400"),
+                    QStringLiteral("57600"), QStringLiteral("115200"), QStringLiteral("230400"),
+                    QStringLiteral("460800"), QStringLiteral("921600")});
+    m_serialBaudCombo->setCurrentText(QStringLiteral("115200"));
+    addSerialCombo(QStringLiteral("Data bits"), &m_serialDataBitsCombo,
+                   {QStringLiteral("5"), QStringLiteral("6"), QStringLiteral("7"), QStringLiteral("8")});
+    m_serialDataBitsCombo->setCurrentText(QStringLiteral("8"));
+    addSerialCombo(QStringLiteral("Parity"), &m_serialParityCombo,
+                   {QStringLiteral("none"), QStringLiteral("even"), QStringLiteral("odd")});
+    addSerialCombo(QStringLiteral("Stop bits"), &m_serialStopBitsCombo,
+                   {QStringLiteral("1"), QStringLiteral("2")});
+    serialLay->addWidget(serialSettingsRow);
+    addSerialCombo(QStringLiteral("Flow control"), &m_serialFlowCombo,
+                   {QStringLiteral("none"), QStringLiteral("hardware"), QStringLiteral("software")});
+    formLay->addWidget(m_serialFieldsPanel);
     formLay->addSpacing(6);
 
     // ---- Authentication ----
-    addSection(QStringLiteral("Authentication"));
+    m_authSectionTitle = new QLabel(QStringLiteral("Authentication"), formInner);
+    m_authSectionTitle->setObjectName(QStringLiteral("settingsSectionTitle"));
+    formLay->addWidget(m_authSectionTitle);
+    m_authSectionRule = new QFrame(formInner);
+    m_authSectionRule->setObjectName(QStringLiteral("settingsDivider"));
+    qobject_cast<QFrame*>(m_authSectionRule)->setFrameShape(QFrame::NoFrame);
+    m_authSectionRule->setFixedHeight(1);
+    formLay->addWidget(m_authSectionRule);
 
     m_authMethodCombo = new QComboBox(formInner);
     m_authMethodCombo->addItem(QStringLiteral("Password"), 0);
     m_authMethodCombo->addItem(QStringLiteral("Private key (keyring)"), 1);
     m_authMethodCombo->addItem(QStringLiteral("Private key (file)"), 2);
-    addLabeled(formLay, QStringLiteral("Method"), m_authMethodCombo);
+    m_authMethodLabel = new QLabel(QStringLiteral("Method"), formInner);
+    m_authMethodLabel->setObjectName(QStringLiteral("fieldLabel"));
+    formLay->addWidget(m_authMethodLabel);
+    formLay->addWidget(m_authMethodCombo);
 
     m_authPasswordPanel = new QWidget(formInner);
     {
@@ -1505,33 +1604,44 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     connect(m_savedTree, &QTreeWidget::itemDoubleClicked, this, [this](QTreeWidgetItem* item, int) {
         if (item && item->parent()) {
             const QString id = item->data(0, Qt::UserRole).toString();
-            openSavedProfile(id);
+            if (item->data(0, Qt::UserRole + 1).toString() == QLatin1String("live")) {
+                emit openLiveSession(id);
+            } else {
+                openSavedProfile(id);
+            }
         }
     });
     connect(m_sessions, &SessionManager::sessionOpened, this, [this](const QString& id) {
         rebuildActiveList();
+        rebuildSavedList();
         if (const auto* live = m_sessions->session(id)) {
             appendLog(QStringLiteral("opened %1").arg(live->profile.displayTitle()));
         }
     });
     connect(m_sessions, &SessionManager::sessionClosed, this, [this](const QString&) {
         rebuildActiveList();
+        rebuildSavedList();
         appendLog(QStringLiteral("session closed"));
     });
     connect(m_sessions, &SessionManager::sessionStatusChanged, this,
             [this](const QString& id, const QString& status) {
                 rebuildActiveList();
+                rebuildSavedList();
                 if (const auto* live = m_sessions->session(id)) {
                     appendLog(QStringLiteral("%1 · %2").arg(live->profile.displayTitle(), status));
                 }
             });
     connect(m_sessions, &SessionManager::sessionConnectionChanged, this,
-            [this](const QString&, bool) { rebuildActiveList(); });
+            [this](const QString&, bool) {
+                rebuildActiveList();
+                rebuildSavedList();
+            });
     connect(m_sessions, &SessionManager::sessionSystemDetected, this,
             [this](const QString& sessionId, const QString& system) {
                 if (const auto* live = m_sessions->session(sessionId)) {
                     setProfileSystem(live->profile.id, system);
                 }
+                rebuildSavedList();
             });
 
     loadSettingsUi();
@@ -1723,6 +1833,7 @@ void DashboardPage::persistAppearanceLive()
     AppSettings::setColorSetting(AppSettings::kTerminalBg, m_termBg);
     s.setValue(QLatin1String(AppSettings::kHighlightAddresses), m_settingsHighlightAddresses->isChecked());
     s.setValue(QLatin1String(AppSettings::kHighlightLogKeywords), m_settingsHighlightKeywords->isChecked());
+    s.setValue(QLatin1String(AppSettings::kHighlightCiscoCli), m_settingsHighlightCiscoCli->isChecked());
     s.sync();
     emit settingsApplied();
 }
@@ -1938,6 +2049,11 @@ void DashboardPage::clearForm()
     m_hostEdit->setText(AppSettings::defaultHost());
     m_portSpin->setValue(AppSettings::defaultPort());
     m_userEdit->setText(AppSettings::defaultUser());
+    if (m_serialBaudCombo) m_serialBaudCombo->setCurrentText(QStringLiteral("115200"));
+    if (m_serialDataBitsCombo) m_serialDataBitsCombo->setCurrentText(QStringLiteral("8"));
+    if (m_serialParityCombo) m_serialParityCombo->setCurrentText(QStringLiteral("none"));
+    if (m_serialStopBitsCombo) m_serialStopBitsCombo->setCurrentText(QStringLiteral("1"));
+    if (m_serialFlowCombo) m_serialFlowCombo->setCurrentText(QStringLiteral("none"));
     m_passEdit->clear();
     m_savePass->setChecked(AppSettings::savePasswordDefault());
     m_keyPathEdit->clear();
@@ -1962,6 +2078,12 @@ void DashboardPage::loadProfileIntoForm(const SessionProfile& profile)
     m_hostEdit->setText(profile.host);
     m_portSpin->setValue(profile.port);
     m_userEdit->setText(profile.user);
+    if (m_serialPortCombo && profile.isSerial()) m_serialPortCombo->setCurrentText(profile.host);
+    if (m_serialBaudCombo) m_serialBaudCombo->setCurrentText(QString::number(profile.serialBaudRate));
+    if (m_serialDataBitsCombo) m_serialDataBitsCombo->setCurrentText(QString::number(profile.serialDataBits));
+    if (m_serialParityCombo) m_serialParityCombo->setCurrentText(profile.serialParity);
+    if (m_serialStopBitsCombo) m_serialStopBitsCombo->setCurrentText(QString::number(profile.serialStopBits));
+    if (m_serialFlowCombo) m_serialFlowCombo->setCurrentText(profile.serialFlowControl);
     m_passEdit->setText(profile.password);
     m_savePass->setChecked(profile.savePassword);
     m_keyPathEdit->setText(profile.privateKeyPath);
@@ -2050,15 +2172,21 @@ void DashboardPage::updateConnectionModeUi()
     }
     const auto mode = static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt());
     const bool telnet = (mode == ConnectionMode::Telnet);
+    const bool serial = (mode == ConnectionMode::Serial);
 
     if (telnet && m_portSpin->value() == AppSettings::defaultPort()) {
         m_portSpin->setValue(23);
     }
 
+    if (m_networkFieldsPanel) m_networkFieldsPanel->setVisible(!serial);
+    if (m_serialFieldsPanel) m_serialFieldsPanel->setVisible(serial);
+    if (m_authSectionTitle) m_authSectionTitle->setVisible(!serial);
+    if (m_authSectionRule) m_authSectionRule->setVisible(!serial);
+    if (m_authMethodLabel) m_authMethodLabel->setVisible(!serial);
     if (m_authMethodCombo) {
-        m_authMethodCombo->setVisible(!telnet);
+        m_authMethodCombo->setVisible(!telnet && !serial);
     }
-    if (telnet && m_authMethodCombo) {
+    if ((telnet || serial) && m_authMethodCombo) {
         m_authMethodCombo->setCurrentIndex(0);
     }
     updateAuthMethodUi();
@@ -2073,10 +2201,11 @@ void DashboardPage::updateAuthMethodUi()
         ? static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt())
         : ConnectionMode::Ssh;
     const bool telnet = (mode == ConnectionMode::Telnet);
+    const bool serial = (mode == ConnectionMode::Serial);
     const int method = m_authMethodCombo->currentData().toInt();
-    const bool password = telnet || (method == 0);
-    const bool keyring = !telnet && (method == 1);
-    const bool keyFile = !telnet && (method == 2);
+    const bool password = !serial && (telnet || (method == 0));
+    const bool keyring = !telnet && !serial && (method == 1);
+    const bool keyFile = !telnet && !serial && (method == 2);
     if (m_authPasswordPanel) {
         m_authPasswordPanel->setVisible(password);
     }
@@ -2109,6 +2238,25 @@ void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
     profile->host = m_hostEdit->text().trimmed();
     profile->port = m_portSpin->value();
     profile->user = m_userEdit->text().trimmed();
+
+    if (profile->isSerial()) {
+        profile->host = m_serialPortCombo->currentText().trimmed();
+        profile->port = 0;
+        profile->user.clear();
+        profile->password.clear();
+        profile->savePassword = false;
+        profile->privateKeyId.clear();
+        profile->privateKeyPath.clear();
+        profile->keyPassphrase.clear();
+        profile->saveKeyPassphrase = false;
+        profile->serialBaudRate = m_serialBaudCombo->currentText().toInt();
+        profile->serialDataBits = m_serialDataBitsCombo->currentText().toInt();
+        profile->serialParity = m_serialParityCombo->currentText();
+        profile->serialStopBits = m_serialStopBitsCombo->currentText().toInt();
+        profile->serialFlowControl = m_serialFlowCombo->currentText();
+        profile->system = QStringLiteral("Serial");
+        return;
+    }
 
     if (profile->isTelnet()) {
         profile->privateKeyId.clear();
@@ -2319,6 +2467,82 @@ void DashboardPage::setProfileSystem(const QString& profileId, const QString& sy
     rebuildSavedList();
 }
 
+bool DashboardPage::isProfileSaved(const SessionProfile& profile) const
+{
+    for (const SessionProfile& saved : m_profiles) {
+        if (!profile.id.isEmpty() && saved.id == profile.id) {
+            return true;
+        }
+        if (saved.host.compare(profile.host, Qt::CaseInsensitive) == 0
+            && saved.port == profile.port
+            && saved.user.compare(profile.user, Qt::CaseSensitive) == 0
+            && saved.connectionMode == profile.connectionMode) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void DashboardPage::saveSessionProfile(const SessionProfile& profile)
+{
+    if (profile.host.trimmed().isEmpty()) {
+        return;
+    }
+    if (isProfileSaved(profile)) {
+        m_hint->setText(QStringLiteral("profile already saved"));
+        rebuildSavedList();
+        return;
+    }
+
+    SessionProfile saved = profile;
+    if (saved.id.isEmpty()) {
+        saved.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    }
+    if (!saved.savePassword) {
+        saved.password.clear();
+    }
+    if (!saved.saveKeyPassphrase) {
+        saved.keyPassphrase.clear();
+    }
+    m_profiles.push_back(saved);
+    saveProfiles(m_profiles);
+    if (m_syncSaveDebounce && m_sync && m_sync->state() == SyncController::State::Active
+        && !m_sync->isPaused()) {
+        m_syncSaveDebounce->start();
+    }
+    rebuildSavedList();
+    rebuildKeychainList();
+    m_hint->setText(QStringLiteral("saved %1").arg(saved.displayTitle()));
+    appendLog(QStringLiteral("saved live session %1").arg(saved.displayTitle()));
+}
+
+void DashboardPage::saveLiveSession(const QString& sessionId)
+{
+    if (const auto* live = m_sessions->session(sessionId)) {
+        saveSessionProfile(live->profile);
+    }
+}
+
+void DashboardPage::showLiveSessionContextMenu(const QPoint& globalPos, const QString& sessionId)
+{
+    const auto* live = m_sessions->session(sessionId);
+    if (!live) {
+        return;
+    }
+    QMenu menu(this);
+    menu.setObjectName(QStringLiteral("dashContextMenu"));
+    auto* focus = menu.addAction(QStringLiteral("Open session"));
+    connect(focus, &QAction::triggered, this, [this, sessionId]() {
+        emit openLiveSession(sessionId);
+    });
+    auto* save = menu.addAction(QStringLiteral("Save connection profile"));
+    save->setEnabled(!isProfileSaved(live->profile));
+    connect(save, &QAction::triggered, this, [this, sessionId]() {
+        saveLiveSession(sessionId);
+    });
+    menu.exec(globalPos);
+}
+
 void DashboardPage::rebuildSavedList()
 {
     if (!m_savedTree) {
@@ -2326,10 +2550,83 @@ void DashboardPage::rebuildSavedList()
     }
     m_savedTree->clear();
 
+    const int folderFontSize = AppSettings::uiFontSize();
+    const int entryFontSize = qMax(8, folderFontSize - 1);
+    const auto applyFolderFont = [this, folderFontSize](QTreeWidgetItem* item) {
+        QFont font = item->font(0);
+        font.setPointSize(folderFontSize);
+        font.setBold(false);
+        for (int column = 0; column < m_savedTree->columnCount(); ++column) {
+            item->setFont(column, font);
+        }
+        item->setSizeHint(0, QSize(0, QFontMetrics(font).height() + 10));
+    };
+    const auto applyEntryFont = [this, entryFontSize](QTreeWidgetItem* item) {
+        QFont font = item->font(0);
+        font.setPointSize(entryFontSize);
+        for (int column = 0; column < m_savedTree->columnCount(); ++column) {
+            item->setFont(column, font);
+        }
+        item->setSizeHint(0, QSize(0, QFontMetrics(font).height() + 6));
+    };
+
     // Reload tag state from disk (assignments + collapse).
     m_tags = AppSettings::tagDefinitions();
     m_tagAssignments = AppSettings::tagAssignments();
     m_tagCollapsed = AppSettings::tagCollapsed();
+
+    const QStringList liveIds = m_sessions->sessionIds();
+    if (!liveIds.isEmpty()) {
+        auto* liveHeader = new QTreeWidgetItem(m_savedTree);
+        liveHeader->setText(0, QStringLiteral("Current sessions  (%1)").arg(liveIds.size()));
+        liveHeader->setData(0, Qt::UserRole + 1, QStringLiteral("live-header"));
+        liveHeader->setFlags(Qt::ItemIsEnabled);
+        applyFolderFont(liveHeader);
+        liveHeader->setForeground(0, QColor(0xc8, 0xc8, 0xc8));
+
+        for (const QString& sessionId : liveIds) {
+            const auto* live = m_sessions->session(sessionId);
+            if (!live) {
+                continue;
+            }
+            auto* child = new QTreeWidgetItem(liveHeader);
+            child->setText(0, live->profile.displayTitle());
+            child->setData(0, Qt::UserRole, sessionId);
+            child->setData(0, Qt::UserRole + 1, QStringLiteral("live"));
+            child->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            child->setText(1, live->profile.connectionTypeLabel());
+            child->setForeground(1, live->profile.isTelnet() ? QColor(0xa8, 0x8a, 0x5a)
+                                  : live->profile.isSerial() ? QColor(0x68, 0x9a, 0xa8)
+                                                             : QColor(0x8a, 0x8a, 0x8a));
+            // The connection type already has its own column; avoid repeating
+            // labels such as "Telnet · connected · Telnet".
+            QString status = live->status;
+            if (live->connected || status.startsWith(QLatin1String("connected"))) {
+                status = QStringLiteral("connected");
+            } else if (status.startsWith(QLatin1String("connecting"))) {
+                status = QStringLiteral("connecting");
+            }
+            child->setText(2, status);
+            child->setForeground(2, live->connected ? QColor(0x78, 0xa0, 0x78)
+                                                     : QColor(0x7a, 0x7a, 0x7a));
+            child->setText(3, live->profile.systemLabel());
+            child->setForeground(3, QColor(0x7a, 0x7a, 0x7a));
+            applyEntryFont(child);
+
+            auto* save = makeRowAction(QStringLiteral(":/icons/plus.svg"),
+                                       QStringLiteral("save connection profile"), m_savedTree);
+            const bool alreadySaved = isProfileSaved(live->profile);
+            save->setEnabled(!alreadySaved);
+            if (alreadySaved) {
+                save->setToolTip(QStringLiteral("connection profile already saved"));
+            }
+            connect(save, &QToolButton::clicked, this, [this, sessionId]() {
+                saveLiveSession(sessionId);
+            });
+            m_savedTree->setItemWidget(child, 4, save);
+        }
+        liveHeader->setExpanded(true);
+    }
 
     // Map profileId → tag (first tag that contains it).
     QHash<QString, QString> profileTag;
@@ -2388,14 +2685,8 @@ void DashboardPage::rebuildSavedList()
                                : QStringLiteral("%1  (%2)").arg(s.title).arg(s.profiles.size()));
         header->setData(0, Qt::UserRole, s.tagName);
         header->setFlags(Qt::ItemIsEnabled);
-        QFont hf = header->font(0);
-        hf.setBold(true);
-        if (hf.pointSize() > 0) {
-            hf.setPointSize(qMax(10, hf.pointSize() + 2));
-        }
-        header->setFont(0, hf);
+        applyFolderFont(header);
         header->setForeground(0, QColor(0xc8, 0xc8, 0xc8));
-        header->setSizeHint(0, QSize(0, 30));
 
         for (const SessionProfile& p : s.profiles) {
             auto* child = new QTreeWidgetItem(header);
@@ -2406,14 +2697,15 @@ void DashboardPage::rebuildSavedList()
             child->setText(1, p.connectionTypeLabel());
             child->setForeground(1, p.isSftpOnly() ? QColor(0x9a, 0x9a, 0x9a)
                                 : p.isTelnet() ? QColor(0xa8, 0x8a, 0x5a)
+                                : p.isSerial() ? QColor(0x68, 0x9a, 0xa8)
                                                : QColor(0x8a, 0x8a, 0x8a));
 
-            QString auth = QStringLiteral("password");
-            if (p.usesPrivateKey() && p.savePassword) {
+            QString auth = p.isSerial() ? QStringLiteral("—") : QStringLiteral("password");
+            if (!p.isSerial() && p.usesPrivateKey() && p.savePassword) {
                 auth = QStringLiteral("key + pass");
-            } else if (p.usesPrivateKey()) {
+            } else if (!p.isSerial() && p.usesPrivateKey()) {
                 auth = QStringLiteral("private key");
-            } else if (!p.savePassword) {
+            } else if (!p.isSerial() && !p.savePassword) {
                 auth = QStringLiteral("prompt");
             }
             child->setText(2, auth);
@@ -2421,6 +2713,7 @@ void DashboardPage::rebuildSavedList()
 
             child->setText(3, p.systemLabel());
             child->setForeground(3, QColor(0x7a, 0x7a, 0x7a));
+            applyEntryFont(child);
         }
 
         // Restore collapsed state.
@@ -2447,10 +2740,21 @@ void DashboardPage::applySavedFilter()
         for (int c = 0; c < header->childCount(); ++c) {
             QTreeWidgetItem* child = header->child(c);
             const QString id = child->data(0, Qt::UserRole).toString();
+            const bool liveRow = child->data(0, Qt::UserRole + 1).toString()
+                == QLatin1String("live");
             bool match = q.isEmpty();
             if (!match) {
-                const int idx = profileIndexById(id);
-                if (idx >= 0) {
+                if (liveRow) {
+                    if (const auto* live = m_sessions->session(id)) {
+                        const SessionProfile& p = live->profile;
+                        match = p.displayTitle().contains(q, Qt::CaseInsensitive)
+                            || p.connectionTypeLabel().contains(q, Qt::CaseInsensitive)
+                            || p.host.contains(q, Qt::CaseInsensitive)
+                            || p.user.contains(q, Qt::CaseInsensitive)
+                            || p.endpoint().contains(q, Qt::CaseInsensitive)
+                            || live->status.contains(q, Qt::CaseInsensitive);
+                    }
+                } else if (const int idx = profileIndexById(id); idx >= 0) {
                     const SessionProfile& p = m_profiles[idx];
                     if (p.displayTitle().contains(q, Qt::CaseInsensitive)
                         || p.connectionTypeLabel().contains(q, Qt::CaseInsensitive)
@@ -2483,7 +2787,7 @@ void DashboardPage::applySavedFilter()
         }
     }
 
-    if (m_profiles.isEmpty()) {
+    if (m_profiles.isEmpty() && m_sessions->count() == 0) {
         m_savedTree->hide();
         m_savedEmpty->setText(QStringLiteral("no hosts yet — create a session to get started"));
         m_savedEmpty->show();
@@ -2701,17 +3005,19 @@ void DashboardPage::showHostContextMenu(const QPoint& globalPos, const QString& 
     menu.addSeparator();
 
     auto* connectAct = menu.addAction(p.isTelnet() ? QStringLiteral("Connect via Telnet")
-                                                   : QStringLiteral("Connect via SSH"));
+                                      : p.isSerial() ? QStringLiteral("Open serial port")
+                                                     : QStringLiteral("Connect via SSH"));
     connect(connectAct, &QAction::triggered, this, [this, profileId]() { openSavedProfile(profileId); });
 
-    if (!p.isTelnet()) {
+    if (!p.isTelnet() && !p.isSerial()) {
         auto* sftp = menu.addAction(QStringLiteral("Connect via SFTP"));
         connect(sftp, &QAction::triggered, this, [this, profileId]() { sftpSavedProfile(profileId); });
     }
 
     menu.addSeparator();
 
-    auto* copyHost = menu.addAction(QStringLiteral("Copy Hostname"));
+    auto* copyHost = menu.addAction(p.isSerial() ? QStringLiteral("Copy Port Name")
+                                                  : QStringLiteral("Copy Hostname"));
     connect(copyHost, &QAction::triggered, this, [p]() {
         QApplication::clipboard()->setText(p.host);
     });
@@ -2793,23 +3099,29 @@ void DashboardPage::rebuildKeychainList()
 
 void DashboardPage::saveCurrentFormAsProfile()
 {
+    const auto mode = static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt());
+    const bool serial = (mode == ConnectionMode::Serial);
     const QString host = m_hostEdit->text().trimmed();
     const QString user = m_userEdit->text().trimmed();
-    if (host.isEmpty() || user.isEmpty()) {
+    if (serial && m_serialPortCombo->currentText().trimmed().isEmpty()) {
+        m_hint->setText(QStringLiteral("serial port required"));
+        return;
+    }
+    if (!serial && (host.isEmpty() || user.isEmpty())) {
         m_hint->setText(QStringLiteral("host and user required"));
         return;
     }
 
     const int method = m_authMethodCombo ? m_authMethodCombo->currentData().toInt() : 0;
-    if (method == 0 && m_passEdit->text().isEmpty()) {
+    if (!serial && method == 0 && m_passEdit->text().isEmpty()) {
         m_hint->setText(QStringLiteral("enter a password"));
         return;
     }
-    if (method == 1 && m_keyringCombo->currentData().toString().isEmpty()) {
+    if (!serial && method == 1 && m_keyringCombo->currentData().toString().isEmpty()) {
         m_hint->setText(QStringLiteral("import or select a keyring key"));
         return;
     }
-    if (method == 2 && m_keyPathEdit->text().trimmed().isEmpty()) {
+    if (!serial && method == 2 && m_keyPathEdit->text().trimmed().isEmpty()) {
         m_hint->setText(QStringLiteral("choose a private key file"));
         return;
     }
@@ -2821,8 +3133,10 @@ void DashboardPage::saveCurrentFormAsProfile()
         p = makeProfile(host, m_portSpin->value(), user, QString(), m_nameEdit->text());
     }
     fillProfileFromForm(&p);
-    p.host = host;
-    p.user = user;
+    if (!serial) {
+        p.host = host;
+        p.user = user;
+    }
     if (!p.savePassword) {
         p.password.clear();
     }
@@ -2869,18 +3183,23 @@ void DashboardPage::saveCurrentFormAsProfile()
 
 void DashboardPage::connectFromForm()
 {
+    const auto mode = static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt());
+    const bool serial = (mode == ConnectionMode::Serial);
     const QString host = m_hostEdit->text().trimmed();
     const QString user = m_userEdit->text().trimmed();
-    if (host.isEmpty() || user.isEmpty()) {
+    if (serial && m_serialPortCombo->currentText().trimmed().isEmpty()) {
+        m_hint->setText(QStringLiteral("serial port required"));
+        return;
+    }
+    if (!serial && (host.isEmpty() || user.isEmpty())) {
         m_hint->setText(QStringLiteral("host and user required"));
         return;
     }
 
-    const auto mode = static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt());
     const bool telnet = (mode == ConnectionMode::Telnet);
 
     const int method = m_authMethodCombo ? m_authMethodCombo->currentData().toInt() : 0;
-    if (!telnet) {
+    if (!telnet && !serial) {
         if (method == 0 && m_passEdit->text().isEmpty() && m_editingId.isEmpty()) {
             m_hint->setText(QStringLiteral("enter a password"));
             return;
@@ -2898,7 +3217,7 @@ void DashboardPage::connectFromForm()
     SessionProfile p = makeProfile(host, m_portSpin->value(), user, QString(), m_nameEdit->text());
     fillProfileFromForm(&p);
 
-    if (method == 0 && p.password.isEmpty() && !m_editingId.isEmpty()) {
+    if (!serial && method == 0 && p.password.isEmpty() && !m_editingId.isEmpty()) {
         for (const SessionProfile& existing : m_profiles) {
             if (existing.id == m_editingId && !existing.password.isEmpty()) {
                 p.password = existing.password;
@@ -2906,7 +3225,7 @@ void DashboardPage::connectFromForm()
             }
         }
     }
-    if (method != 0 && p.keyPassphrase.isEmpty() && !m_editingId.isEmpty()) {
+    if (!serial && method != 0 && p.keyPassphrase.isEmpty() && !m_editingId.isEmpty()) {
         for (const SessionProfile& existing : m_profiles) {
             if (existing.id == m_editingId && !existing.keyPassphrase.isEmpty()) {
                 p.keyPassphrase = existing.keyPassphrase;
@@ -2933,7 +3252,8 @@ void DashboardPage::loadSettingsUi()
     const QList<QObject*> appearanceBlocks = {
         m_settingsTheme,           m_settingsUiFontFamily, m_settingsUiFontSize,
         m_settingsFontFamily,      m_settingsFontSize,     m_settingsHighlightAddresses,
-        m_settingsHighlightKeywords, m_settingsTermBgImageBtn, m_settingsTermBgOpacity, m_settingsTermBgBlur};
+        m_settingsHighlightKeywords, m_settingsHighlightCiscoCli,
+        m_settingsTermBgImageBtn, m_settingsTermBgOpacity, m_settingsTermBgBlur};
     for (QObject* o : appearanceBlocks) {
         if (auto* w = qobject_cast<QWidget*>(o)) {
             w->blockSignals(true);
@@ -2960,6 +3280,7 @@ void DashboardPage::loadSettingsUi()
     m_settingsFontSize->setValue(AppSettings::fontSize());
     m_settingsHighlightAddresses->setChecked(AppSettings::highlightAddresses());
     m_settingsHighlightKeywords->setChecked(AppSettings::highlightLogKeywords());
+    m_settingsHighlightCiscoCli->setChecked(AppSettings::highlightCiscoCli());
 
     m_termFg = AppSettings::terminalFg();
     m_termBg = AppSettings::terminalBg();
@@ -3099,6 +3420,7 @@ void DashboardPage::saveSettingsUi()
     AppSettings::setColorSetting(AppSettings::kTerminalBg, m_termBg);
     s.setValue(QLatin1String(AppSettings::kHighlightAddresses), m_settingsHighlightAddresses->isChecked());
     s.setValue(QLatin1String(AppSettings::kHighlightLogKeywords), m_settingsHighlightKeywords->isChecked());
+    s.setValue(QLatin1String(AppSettings::kHighlightCiscoCli), m_settingsHighlightCiscoCli->isChecked());
     s.setValue(QLatin1String(AppSettings::kAnimationsEnabled), m_settingsAnimations->isChecked());
     s.setValue(QLatin1String(AppSettings::kShowServerStats), m_settingsShowStats->isChecked());
     s.setValue(QLatin1String(AppSettings::kStatsIntervalSec), m_settingsStatsInterval->value());

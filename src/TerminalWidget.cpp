@@ -258,11 +258,6 @@ void TerminalWidget::syncPtySize(bool forceEmit)
     estimatePtySize(&cols, &rows);
     if (cols != m_cols || rows != m_rows) {
         resizeGrid(cols, rows);
-        m_scrollBottom = qMin(m_scrollBottom, m_rows - 1);
-        if (m_scrollTop > m_scrollBottom) {
-            m_scrollTop = 0;
-            m_scrollBottom = m_rows - 1;
-        }
         clampCursor();
         emit ptySizeChanged(cols, rows);
         update();
@@ -451,6 +446,10 @@ void TerminalWidget::resizeGrid(int cols, int rows)
 
     const int oldCols = m_cols;
     const int oldRows = m_rows;
+    const bool fullHeightScrollRegion = m_scrollTop == 0
+        && m_scrollBottom == oldRows - 1;
+    const bool fullHeightMainScrollRegion = m_mainScrollTop == 0
+        && m_mainScrollBottom == oldRows - 1;
 
     if (m_altScreen) {
         resizeBuf(m_cells, oldCols, oldRows);
@@ -470,10 +469,27 @@ void TerminalWidget::resizeGrid(int cols, int rows)
     m_rows = rows;
     m_cx = qBound(0, m_cx, m_cols - 1);
     m_cy = qBound(0, m_cy, m_rows - 1);
-    m_scrollBottom = qMin(m_scrollBottom, m_rows - 1);
-    if (m_scrollTop > m_scrollBottom) {
+
+    // A normal full-screen terminal region must grow again after a temporary
+    // shrink (notably the 2 px -> 50% splitter opening animation). Previously
+    // the bottom stayed clamped to the smallest intermediate height forever.
+    if (fullHeightScrollRegion) {
         m_scrollTop = 0;
         m_scrollBottom = m_rows - 1;
+    } else {
+        m_scrollTop = qMin(m_scrollTop, m_rows - 1);
+        m_scrollBottom = qMin(m_scrollBottom, m_rows - 1);
+        if (m_scrollTop > m_scrollBottom) {
+            m_scrollTop = 0;
+            m_scrollBottom = m_rows - 1;
+        }
+    }
+    if (fullHeightMainScrollRegion) {
+        m_mainScrollTop = 0;
+        m_mainScrollBottom = m_rows - 1;
+    } else {
+        m_mainScrollTop = qMin(m_mainScrollTop, m_rows - 1);
+        m_mainScrollBottom = qMin(m_mainScrollBottom, m_rows - 1);
     }
 
     for (QVector<Cell>& line : m_scrollback) {
@@ -2430,7 +2446,8 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
     QVector<QColor> colors(m_cols);
     const bool wantAddr = AppSettings::highlightAddresses();
     const bool wantKeys = AppSettings::highlightLogKeywords();
-    if (!wantAddr && !wantKeys) {
+    const bool wantCisco = AppSettings::highlightCiscoCli();
+    if (!wantAddr && !wantKeys && !wantCisco) {
         return colors;
     }
 
@@ -2439,11 +2456,12 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
         return colors;
     }
 
+    enum class RuleGroup { Address, Keyword, Cisco };
     struct Rule {
         QRegularExpression re;
         QColor color;
         int priority; // higher wins on overlap
-        bool address; // IP/MAC vs log keyword
+        RuleGroup group;
     };
 
     // Built once — patterns are cheap; could cache statically
@@ -2451,31 +2469,72 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
         // IP & MAC first (higher priority than keywords that might appear nearby)
         {QRegularExpression(
              QStringLiteral(R"(\b(?:(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\b)")),
-         QColor(0x56, 0xb6, 0xc2), 30, true},
+         QColor(0x56, 0xb6, 0xc2), 30, RuleGroup::Address},
         {QRegularExpression(
              QStringLiteral(R"(\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b)")),
-         QColor(0xc6, 0x78, 0xdd), 30, true},
+         QColor(0xc6, 0x78, 0xdd), 30, RuleGroup::Address},
         // IPv6 (compressed forms included)
         {QRegularExpression(
              QStringLiteral(R"(\b(?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{0,4}\b)")),
-         QColor(0x56, 0xb6, 0xc2), 28, true},
+         QColor(0x56, 0xb6, 0xc2), 28, RuleGroup::Address},
 
         {QRegularExpression(QStringLiteral(R"(\bERROR\b)"), QRegularExpression::CaseInsensitiveOption),
-         QColor(0xf4, 0x47, 0x47), 20, false},
+         QColor(0xf4, 0x47, 0x47), 20, RuleGroup::Keyword},
         {QRegularExpression(QStringLiteral(R"(\bWARN(?:ING)?\b)"), QRegularExpression::CaseInsensitiveOption),
-         QColor(0xe5, 0xc0, 0x7b), 20, false},
+         QColor(0xe5, 0xc0, 0x7b), 20, RuleGroup::Keyword},
         {QRegularExpression(QStringLiteral(R"(\bOK\b)"), QRegularExpression::CaseInsensitiveOption),
-         QColor(0x23, 0xd1, 0x8b), 20, false},
+         QColor(0x23, 0xd1, 0x8b), 20, RuleGroup::Keyword},
         {QRegularExpression(QStringLiteral(R"(\bINFO\b)"), QRegularExpression::CaseInsensitiveOption),
-         QColor(0x5c, 0xa1, 0xf6), 20, false},
+         QColor(0x5c, 0xa1, 0xf6), 20, RuleGroup::Keyword},
         {QRegularExpression(QStringLiteral(R"(\bDEBUG\b)"), QRegularExpression::CaseInsensitiveOption),
-         QColor(0x9a, 0x9a, 0xb8), 20, false},
+         QColor(0x9a, 0x9a, 0xb8), 20, RuleGroup::Keyword},
+
+        // Cisco IOS / IOS-XE / NX-OS operationally useful tokens.
+        {QRegularExpression(
+             QStringLiteral(R"(^\s*[A-Za-z0-9_.-]+(?:\([^)]+\))?[>#])")),
+         QColor(0xe5, 0xc0, 0x7b), 24, RuleGroup::Cisco},
+        {QRegularExpression(
+             QStringLiteral(R"(\b(?:(?:GigabitEthernet|FastEthernet|TenGigabitEthernet|TwentyFiveGigE|FortyGigabitEthernet|HundredGigE|Ethernet|Port-channel|Loopback|Vlan|Tunnel|Serial)|(?:Gi|Fa|Te|Twe|Fo|Hu|Eth|Po|Lo|Vl|Tu|Se))\d+(?:[/.:-]\d+)*\b)"),
+             QRegularExpression::CaseInsensitiveOption),
+         QColor(0x56, 0xb6, 0xc2), 38, RuleGroup::Cisco},
+        // Cisco's dotted MAC notation (0011.2233.4455).
+        {QRegularExpression(QStringLiteral(R"(\b[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\b)")),
+         QColor(0xc6, 0x78, 0xdd), 42, RuleGroup::Cisco},
+        {QRegularExpression(
+             QStringLiteral(R"(\b(?:OSPFv?3?|BGP|EIGRP|RIP|IS-IS|STP|RSTP|MSTP|PVST\+?|HSRP|VRRP|GLBP|CDP|LLDP|LACP|PAgP|VTP|DTP|ARP|NAT|ACL|IPsec|VRF|VLAN)\b)"),
+             QRegularExpression::CaseInsensitiveOption),
+         QColor(0xc6, 0x78, 0xdd), 27, RuleGroup::Cisco},
+        {QRegularExpression(QStringLiteral(R"(^\s*[CLSDORBE](?:\*|\s+E[12])?(?=\s))"),
+                            QRegularExpression::CaseInsensitiveOption),
+         QColor(0xc6, 0x78, 0xdd), 26, RuleGroup::Cisco},
+        {QRegularExpression(
+             QStringLiteral(R"(\b(?:up|connected|forwarding|established|full|enabled|success(?:ful)?|permit(?:ted)?)\b)"),
+             QRegularExpression::CaseInsensitiveOption),
+         QColor(0x23, 0xd1, 0x8b), 34, RuleGroup::Cisco},
+        {QRegularExpression(
+             QStringLiteral(R"(\b(?:idle|active|init|2way|exstart|exchange|loading|listening|learning|blocking|discarding|standby|trunk(?:ing)?|routed|access)\b)"),
+             QRegularExpression::CaseInsensitiveOption),
+         QColor(0xe5, 0xc0, 0x7b), 32, RuleGroup::Cisco},
+        {QRegularExpression(
+             QStringLiteral(R"(\b(?:administratively\s+down|err-?disabled|notconnect|inactive|disabled|shutdown|down|failed|failure|timeout|CRC|input\s+errors?|output\s+errors?|runts?|giants?|overruns?|ignored|resets?|lost\s+carrier|no\s+carrier|late\s+collisions?|collisions?|drops?|dropped|discards?|discarded|denied?|unreachable|flapping)\b)"),
+             QRegularExpression::CaseInsensitiveOption),
+         QColor(0xf4, 0x47, 0x47), 55, RuleGroup::Cisco},
+        // IOS syslog mnemonic with severity 0-3 = urgent/critical/error.
+        {QRegularExpression(QStringLiteral(R"(%[A-Z0-9_]+-[0-3]-[A-Z0-9_]+)")),
+         QColor(0xf4, 0x47, 0x47), 58, RuleGroup::Cisco},
+        {QRegularExpression(QStringLiteral(R"(%[A-Z0-9_]+-4-[A-Z0-9_]+)")),
+         QColor(0xe5, 0xc0, 0x7b), 57, RuleGroup::Cisco},
+        {QRegularExpression(QStringLiteral(R"(%[A-Z0-9_]+-[5-7]-[A-Z0-9_]+)")),
+         QColor(0x5c, 0xa1, 0xf6), 56, RuleGroup::Cisco},
     };
 
     QVector<int> pri(m_cols, -1);
 
     for (const Rule& rule : rules) {
-        if (rule.address ? !wantAddr : !wantKeys) {
+        const bool enabled = rule.group == RuleGroup::Address ? wantAddr
+            : rule.group == RuleGroup::Keyword ? wantKeys
+                                               : wantCisco;
+        if (!enabled) {
             continue;
         }
         auto it = rule.re.globalMatch(line);

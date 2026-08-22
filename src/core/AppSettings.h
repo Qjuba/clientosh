@@ -33,6 +33,7 @@ inline constexpr const char* kSftpDefaultView = "settings/sftpDefaultView";
 inline constexpr const char* kSftpVerboseLogging = "settings/sftpVerboseLogging";
 inline constexpr const char* kHighlightAddresses = "settings/highlightAddresses";
 inline constexpr const char* kHighlightLogKeywords = "settings/highlightLogKeywords";
+inline constexpr const char* kHighlightCiscoCli = "settings/highlightCiscoCli";
 inline constexpr const char* kCtrlScrollFontZoom = "settings/ctrlScrollFontZoom";
 inline constexpr const char* kScrollSensitivity = "settings/scrollSensitivity";
 inline constexpr const char* kCopyPasteMode = "settings/copyPasteMode";
@@ -256,6 +257,11 @@ inline bool highlightAddresses()
 inline bool highlightLogKeywords()
 {
     return QSettings().value(QLatin1String(kHighlightLogKeywords), true).toBool();
+}
+
+inline bool highlightCiscoCli()
+{
+    return QSettings().value(QLatin1String(kHighlightCiscoCli), false).toBool();
 }
 
 inline bool ctrlScrollFontZoom()

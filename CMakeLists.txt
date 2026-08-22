@@ -128,6 +128,8 @@ add_executable(clientosh
     src/core/SshSession.cpp
     src/core/TelnetSession.h
     src/core/TelnetSession.cpp
+    src/core/SerialSession.h
+    src/core/SerialSession.cpp
     src/core/SessionProfile.h
     src/core/SessionManager.h
     src/core/SessionManager.cpp

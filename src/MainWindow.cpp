@@ -19,6 +19,7 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QPointer>
+#include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
 #include <QShortcut>
@@ -67,6 +68,8 @@ MainWindow::MainWindow(QWidget* parent)
         for (const QString& id : m_sessions->sessionIds()) {
             if (TerminalWidget* term = findTerminal(id)) {
                 term->applyAppearanceFromSettings();
+                // Font metrics affect both the local grid and the remote PTY/NAWS size.
+                term->syncPtySize(true);
             }
         }
         for (auto it = m_sftpPanes.begin(); it != m_sftpPanes.end(); ++it) {
@@ -76,16 +79,18 @@ MainWindow::MainWindow(QWidget* parent)
         }
         m_topNav->applySettings();
         applyTheme();
+        m_dashboard->refresh();
         rebindShortcuts();
     });
 
-    connect(m_topNav, &TopNavBar::dashboardRequested, this, &MainWindow::showDashboard);
+    connect(m_topNav, &TopNavBar::dashboardRequested, this, &MainWindow::toggleDashboard);
     connect(m_topNav, &TopNavBar::newSessionRequested, this, [this]() {
         showDashboard();
         m_dashboard->showNewSessionForm();
     });
     connect(m_topNav, &TopNavBar::panelSelectRequested, this, &MainWindow::openOrFocusPanel);
     connect(m_topNav, &TopNavBar::panelCloseRequested, this, &MainWindow::closePanel);
+    connect(m_topNav, &TopNavBar::savePanelRequested, this, &MainWindow::savePanelProfile);
     connect(m_topNav, &TopNavBar::panelPreviewRequested, this, [this](const PanelRef& ref) {
         // Drag-hover over a tab: activate that viewport. Do not rebuild tabs —
         // destroying the drag-source chip mid-drag crashes.
@@ -134,6 +139,9 @@ MainWindow::MainWindow(QWidget* parent)
                 if (TerminalWidget* term = findTerminal(id)) {
                     term->setInteractive(connected);
                     if (connected) {
+                        // Replace the temporary startup message instead of leaving
+                        // a stale "connecting..." line after the socket is ready.
+                        term->appendOutput(QByteArray("\r\x1b[2Kconnected\r\n"));
                         term->setFocus(Qt::OtherFocusReason);
                         term->scrollViewToBottom();
                         // After layout/paint, push the real cols/rows to the PTY.
@@ -251,9 +259,24 @@ void MainWindow::closeEvent(QCloseEvent* event)
 
 void MainWindow::showDashboard()
 {
+    m_topNav->setWorkspaceActive(false);
     m_dashboard->refresh();
     m_rootStack->setCurrentWidget(m_dashboard);
     m_topNav->setVisible(m_workspace->hasAttachedSessions());
+}
+
+void MainWindow::toggleDashboard()
+{
+    if (m_rootStack->currentWidget() == m_dashboard && m_workspace->hasAttachedSessions()) {
+        const PanelRef previous = m_workspace->activePanel();
+        if (previous.isValid()) {
+            openOrFocusPanel(previous);
+        } else {
+            showWorkspace();
+        }
+        return;
+    }
+    showDashboard();
 }
 
 void MainWindow::showWorkspace()
@@ -262,6 +285,7 @@ void MainWindow::showWorkspace()
         showDashboard();
         return;
     }
+    m_topNav->setWorkspaceActive(true);
     m_topNav->setVisible(true);
     m_rootStack->setCurrentWidget(m_workspace);
 }
@@ -286,7 +310,7 @@ void MainWindow::openProfileThenSftp(const SessionProfile& profile)
         openStandaloneSftp(profile);
         return;
     }
-    if (profile.isTelnet()) {
+    if (profile.isTelnet() || profile.isSerial()) {
         beginTerminalSession(profile, false);
         return;
     }
@@ -334,7 +358,7 @@ QString MainWindow::beginTerminalSession(const SessionProfile& profile, bool ope
     term->estimatePtySize(&cols, &rows);
     term->syncPtySize(true);
     term->clearTerminal();
-    term->appendOutput(QByteArray("connecting...\r\n"));
+    term->appendOutput(QByteArray("connecting..."));
     term->scrollViewToBottom();
 
     // PTY is requested with this size — MOTD/shell output will wrap correctly.
@@ -534,9 +558,9 @@ void MainWindow::openSftpFromSession(const QString& sessionId)
     if (!live) {
         return;
     }
-    if (live->profile.isTelnet()) {
+    if (live->profile.isTelnet() || live->profile.isSerial()) {
         QMessageBox::information(this, QStringLiteral("sftp"),
-                                 QStringLiteral("SFTP is not available for Telnet sessions."));
+                                 QStringLiteral("SFTP is not available for this session type."));
         return;
     }
     if (!live->connected) {
@@ -601,6 +625,22 @@ void MainWindow::closePanel(const PanelRef& ref)
     }
 
     closeLiveSession(ref.sessionId);
+}
+
+void MainWindow::savePanelProfile(const PanelRef& ref)
+{
+    if (!ref.isValid()) {
+        return;
+    }
+    if (ref.kind == PanelKind::Terminal) {
+        if (const auto* live = m_sessions->session(ref.sessionId)) {
+            m_dashboard->saveSessionProfile(live->profile);
+        }
+        return;
+    }
+    if (SftpWindow* sftp = m_sftpPanes.value(ref.sessionId)) {
+        m_dashboard->saveSessionProfile(sftp->profile());
+    }
 }
 
 void MainWindow::closeLiveSession(const QString& id)
@@ -685,7 +725,7 @@ void MainWindow::applyTheme()
         return qss;
     };
 
-    const QString qss = fill(QStringLiteral(
+    QString qss = fill(QStringLiteral(
         "QMainWindow, QWidget#dashboardPage, QWidget#sessionWorkspace, QWidget#terminalWindow, QWidget#sftpWindow {"
         "  background-color: {{windowBg}};"
         "  color: {{text}};"
@@ -985,7 +1025,7 @@ void MainWindow::applyTheme()
         "QPushButton:hover { background-color: {{buttonHover}}; border-color: {{borderStrong}}; }"
         "QPushButton:pressed { background-color: {{buttonPressed}}; }"
         "QPushButton:disabled { color: {{textDim}}; border-color: {{border}}; background: {{windowBg}}; }"
-        "QCheckBox { color: {{text}}; spacing: 8px; }"
+        "QCheckBox { color: {{text}}; spacing: 8px; font-size: 11px; }"
         "QCheckBox::indicator {"
         "  width: 16px; height: 16px;"
         "  border: 2px solid {{borderStrong}};"
@@ -1043,5 +1083,22 @@ void MainWindow::applyTheme()
         "QScrollBar#termScrollBar::add-page:vertical,"
         "QScrollBar#termScrollBar::sub-page:vertical { background: transparent; }"
     ));
+
+    // The stylesheet contains deliberate relative size differences, but fixed
+    // pixel values used to make the UI font-size setting ineffective. Scale all
+    // of those values from the original 10 pt baseline.
+    const qreal fontScale = qreal(AppSettings::uiFontSize()) / 10.0;
+    const QRegularExpression fontSizePattern(QStringLiteral("font-size:\\s*(\\d+)px"));
+    qsizetype offset = 0;
+    while (true) {
+        const QRegularExpressionMatch match = fontSizePattern.match(qss, offset);
+        if (!match.hasMatch()) {
+            break;
+        }
+        const int scaled = qMax(1, qRound(match.captured(1).toInt() * fontScale));
+        const QString replacement = QStringLiteral("font-size: %1px").arg(scaled);
+        qss.replace(match.capturedStart(), match.capturedLength(), replacement);
+        offset = match.capturedStart() + replacement.size();
+    }
     setStyleSheet(qss);
 }

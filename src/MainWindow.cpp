@@ -266,6 +266,11 @@ void MainWindow::showWorkspace()
     m_rootStack->setCurrentWidget(m_workspace);
 }
 
+void MainWindow::openSession(const SessionProfile& profile)
+{
+    openProfileSession(profile);
+}
+
 void MainWindow::openProfileSession(const SessionProfile& profile)
 {
     if (profile.isSftpOnly()) {
@@ -1040,4 +1045,3 @@ void MainWindow::applyTheme()
     ));
     setStyleSheet(qss);
 }
-

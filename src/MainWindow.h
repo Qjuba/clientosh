@@ -23,6 +23,8 @@ class MainWindow : public QMainWindow
 
 public:
     explicit MainWindow(QWidget* parent = nullptr);
+    /** Open an ad-hoc session, e.g. one supplied on the command line. */
+    void openSession(const SessionProfile& profile);
 
 protected:
     void closeEvent(QCloseEvent* event) override;

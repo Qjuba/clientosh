@@ -275,6 +275,15 @@ sudo apt install ./build-deb/clientosh_*.deb
 
 From the dashboard, give a session a **name**, **host**, **port**, and **user**. Choose **SSH** (terminal + SFTP), **Telnet** (terminal only), or **SFTP-only** mode.
 
+You can also open an ad-hoc terminal session directly from the command line. The tab name is optional; both `-name` and `--name` are accepted:
+
+```bash
+/usr/bin/clientosh telnet 192.0.2.10:23 -name router
+/usr/bin/clientosh ssh 192.0.2.20:22 -name server
+```
+
+If the endpoint matches a saved profile of the same type, its credentials and key settings are reused. Otherwise SSH uses the default username configured in clientosh settings.
+
 > By default, saved credentials are *rejected* unless you explicitly opt in to store a password - secrets live only in the encrypted keyring vault, never in plaintext.
 
 ### 2. Connect

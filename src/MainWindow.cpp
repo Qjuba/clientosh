@@ -956,6 +956,7 @@ void MainWindow::applyTheme()
         "  gridline-color: transparent;"
         "  border: 1px solid {{border}};"
         "  background: {{tableBg}};"
+        "  padding: 0;"
         "}"
         "QTreeWidget#dashTable {"
         "  show-decoration-selected: 1;"

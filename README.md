@@ -319,9 +319,36 @@ Enable verbose mode with **Settings → SFTP → verbose logging**.
 | Open SFTP | `Ctrl+Shift+S` |
 | Font bigger / smaller / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 
-### Command-line quick connect
+### Command-line interface
 
-Launch straight into a session without using the dashboard:
+`clientosh` can be launched from the terminal to open a session immediately or to print help/version. With no arguments it opens the dashboard GUI.
+
+```text
+clientosh [options] <command> <target>
+```
+
+| Command | Description | Default port |
+|---|---|---|
+| `ssh` / `connect` | SSH terminal (+ optional SFTP with `--sftp`) | 22 |
+| `telnet` | Telnet terminal | 23 |
+| `sftp` | SFTP file manager only | 22 |
+
+**Target** (required for connect commands): `host`, `host:port`, `user@host`, `user@host:port`, or IPv6 `[::1]:port`.
+
+#### Help and version
+
+These print to the terminal and exit — no GUI window:
+
+```bash
+clientosh --help
+clientosh -h
+clientosh --version
+clientosh -v
+```
+
+On Windows, run from **PowerShell** or **cmd** (for example `.\build\clientosh.exe --help`).
+
+#### Quick connect examples
 
 ```bash
 # Telnet
@@ -332,30 +359,43 @@ clientosh telnet switch.local -u admin -name Core-SW
 clientosh ssh user@prod.example.com -name Production
 clientosh ssh 10.0.0.5:2222 -u admin -name Jump
 clientosh ssh host -i ~/.ssh/id_ed25519 -u root -name Root
+clientosh ssh user@host -p secret -name Lab
 
-# SSH + SFTP pane
+# SSH + SFTP pane at once
 clientosh ssh deploy@files.example.com --sftp -name Deploy
 
 # SFTP only
 clientosh sftp user@files.example.com -name Files
 clientosh sftp backup.local:2222 -u backup -name Backups
+
+# Windows (path to built binary)
+.\build\clientosh.exe telnet 192.168.0.1:23 -name Router
+.\build\clientosh.exe ssh user@10.0.0.5 -name Prod
+
+# Linux / macOS (installed binary)
+clientosh telnet router.lan:23 -name Router
+/usr/bin/clientosh ssh user@prod.example.com -name Production
 ```
 
-**Target formats:** `host`, `host:port`, `user@host`, `user@host:port` (IPv6: `[::1]:port`).
+Connect commands open the **GUI** and start the session in a new tab. Use `-name` / `-n` to set the tab title. Passwords from `-p` / `--password` are used for this session only and are **not** saved to the vault.
+
+For Telnet, username is optional (you can type credentials manually in the terminal). For SSH and SFTP, provide `user@host` or `-u` / `--user`.
+
+#### Options
 
 | Option | Description |
 |---|---|
-| `-name`, `--name` | Tab / pane title |
+| `-n`, `-name`, `--name` | Tab / pane title |
 | `-u`, `--user` | Username (overrides `user@` in target) |
 | `-P`, `--port` | Port (overrides `:port` in target) |
 | `-p`, `--password` | Password for this session only (not saved) |
-| `-i`, `--identity` | Private key file |
+| `-i`, `--identity` | Private key file path |
 | `--keyring` | Saved keyring key id |
-| `--key-passphrase` | Passphrase for an encrypted key |
+| `--key-passphrase` | Passphrase for an encrypted private key |
 | `--sftp` | With `ssh`, also open an SFTP pane |
-| `--verbose` | Verbose SFTP logging |
-
-Run `clientosh` with no arguments to open the dashboard. See `clientosh --help` for the full list.
+| `--verbose` | Verbose SFTP logging (same as Settings → SFTP) |
+| `-h`, `--help`, `-?` | Print usage and exit |
+| `-v`, `--version` | Print version and exit |
 
 <br/>
 

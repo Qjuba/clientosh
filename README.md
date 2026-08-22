@@ -283,7 +283,8 @@ You can also open an ad-hoc terminal session directly from the command line. The
 /usr/bin/clientosh serial /dev/ttyUSB0 --baud 9600 -name console
 ```
 
-SSH uses the default username configured in clientosh settings when one is not supplied explicitly.
+If the endpoint matches a saved profile of the same type, its credentials and key settings are reused. Otherwise SSH uses the default username configured in clientosh settings.
+When clientosh is already running, subsequent SSH/Telnet/serial commands add another tab to the existing window instead of starting another window.
 
 > By default, saved credentials are *rejected* unless you explicitly opt in to store a password - secrets live only in the encrypted keyring vault, never in plaintext.
 

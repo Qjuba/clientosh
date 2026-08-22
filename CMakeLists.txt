@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(clientosh VERSION 1.0.5 LANGUAGES CXX)
+project(clientosh VERSION 1.0.6 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -147,6 +147,8 @@ add_executable(clientosh
     src/core/KeyringAdapter.cpp
     src/core/VaultManager.h
     src/core/VaultManager.cpp
+    src/core/CliLaunch.h
+    src/core/CliLaunch.cpp
     src/core/PrivateKeyLoader.h
     src/core/SshPasswordAuth.h
     src/core/sync/SyncKey.h
@@ -188,6 +190,8 @@ add_executable(clientosh
     src/SftpWindow.cpp
     src/platform/WindowStayOnTop.h
     src/platform/WindowStayOnTop.cpp
+    src/platform/ConsoleAttach.h
+    src/platform/ConsoleAttach.cpp
     src/ui/Motion.h
     src/ui/Motion.cpp
     resources.qrc
@@ -223,6 +227,8 @@ endif()
 
 if(WIN32)
     target_link_libraries(clientosh PRIVATE ws2_32 advapi32)
+    # WINDOWS subsystem: no console flash when opening the GUI with no args.
+    # CLI output uses AttachConsole / WriteConsoleW (see ConsoleAttach.cpp).
     set_target_properties(clientosh PROPERTIES WIN32_EXECUTABLE TRUE)
 
     # Bundle runtime DLLs next to the exe when building against MSYS2/custom prefix

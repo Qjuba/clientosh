@@ -7,7 +7,7 @@
 #define AppName      "clientosh"
 #define AppVersion   "@APP_VERSION@"
 #define AppPublisher "clientosh"
-#define AppURL       "https://github.com/clientosh/clientosh"
+#define AppURL       "https://github.com/hdmain/clientosh"
 #define AppExeName   "clientosh.exe"
 #define BuildDir     "@BUILD_DIR@"
 

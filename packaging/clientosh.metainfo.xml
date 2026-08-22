@@ -2,14 +2,16 @@
 <component type="desktop-application">
   <id>io.github.clientosh</id>
   <name>clientosh</name>
-  <summary>Raw dark-gray SSH client</summary>
+  <summary>Lightweight multiplatform SSH, SFTP, and Telnet client</summary>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
+  <url type="homepage">https://github.com/hdmain/clientosh</url>
+  <url type="bugtracker">https://github.com/hdmain/clientosh/issues</url>
   <description>
     <p>
-      clientosh is a lightweight SSH client built with Qt 6 and libssh.
-      It provides a dark monospace UI with session management, detachable
-      terminals, scrollback, and keyword highlighting.
+      clientosh is a lightweight SSH, SFTP, and Telnet client built with Qt 6 and libssh.
+      It provides a dark monospace UI with session management, detachable terminals,
+      scrollback, keyword highlighting, and an optional addon marketplace.
     </p>
   </description>
   <launchable type="desktop-id">clientosh.desktop</launchable>

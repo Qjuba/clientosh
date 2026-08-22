@@ -1,6 +1,7 @@
 #include "ServerStatsClient.h"
 #include "AppSettings.h"
 #include "PrivateKeyLoader.h"
+#include "SshPasswordAuth.h"
 
 #include <libssh/libssh.h>
 
@@ -93,11 +94,10 @@ bool ServerStatsClient::authenticate(const SessionProfile& profile, QString* err
         return false;
     }
 
-    if (ssh_userauth_password(session, nullptr, profile.password.toUtf8().constData())
-        != SSH_AUTH_SUCCESS) {
+    QString authErr;
+    if (!sshUserauthPasswordFlexible(session, profile.password, profile.user, &authErr)) {
         if (errorOut) {
-            *errorOut = QStringLiteral("auth failed: %1")
-                            .arg(QString::fromUtf8(ssh_get_error(session)));
+            *errorOut = QStringLiteral("auth failed: %1").arg(authErr);
         }
         return false;
     }

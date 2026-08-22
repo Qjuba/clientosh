@@ -1,6 +1,7 @@
 #include "SshSession.h"
 
 #include "PrivateKeyLoader.h"
+#include "SshPasswordAuth.h"
 
 #include <libssh/libssh.h>
 
@@ -277,15 +278,28 @@ bool SshSession::authenticate(const QString& password,
     }
 
     emit statusChanged(QStringLiteral("authenticating with password..."));
-    const int auth = ssh_userauth_password(m_session, nullptr, password.toUtf8().constData());
-    if (auth != SSH_AUTH_SUCCESS) {
-        if (errorOut) {
-            *errorOut = QStringLiteral("auth failed: %1")
-                            .arg(QString::fromUtf8(ssh_get_error(m_session)));
-        }
+    const QByteArray passUtf8 = password.toUtf8();
+    if (ssh_userauth_password(m_session, nullptr, passUtf8.constData()) == SSH_AUTH_SUCCESS) {
+        return true;
+    }
+    const QString passErr = QString::fromUtf8(ssh_get_error(m_session));
+
+    if (stopRequested()) {
         return false;
     }
-    return true;
+
+    emit statusChanged(QStringLiteral("password auth failed, trying keyboard-interactive..."));
+    QString kbdintErr;
+    if (sshTryKbdintPassword(m_session, password, m_user, &kbdintErr)) {
+        return true;
+    }
+
+    if (errorOut) {
+        *errorOut = QStringLiteral("auth failed: password (%1); keyboard-interactive (%2)")
+                        .arg(passErr.isEmpty() ? QStringLiteral("denied") : passErr,
+                             kbdintErr.isEmpty() ? QStringLiteral("denied") : kbdintErr);
+    }
+    return false;
 }
 
 void SshSession::run()

@@ -7,7 +7,7 @@
 !define APP_NAME        "clientosh"
 !define APP_VERSION     "@APP_VERSION@"
 !define APP_PUBLISHER   "clientosh"
-!define APP_URL         "https://github.com/clientosh/clientosh"
+!define APP_URL         "https://github.com/hdmain/clientosh"
 !define EXE_NAME        "clientosh.exe"
 !define UNINSTALL_KEY   "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 

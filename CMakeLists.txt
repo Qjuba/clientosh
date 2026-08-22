@@ -146,6 +146,7 @@ add_executable(clientosh
     src/core/VaultManager.h
     src/core/VaultManager.cpp
     src/core/PrivateKeyLoader.h
+    src/core/SshPasswordAuth.h
     src/core/sync/SyncKey.h
     src/core/sync/SyncKey.cpp
     src/core/sync/SyncCrypto.h
@@ -385,7 +386,7 @@ set(CPACK_PACKAGE_VERSION_MAJOR ${PROJECT_VERSION_MAJOR})
 set(CPACK_PACKAGE_VERSION_MINOR ${PROJECT_VERSION_MINOR})
 set(CPACK_PACKAGE_VERSION_PATCH ${PROJECT_VERSION_PATCH})
 set(CPACK_PACKAGE_CONTACT "clientosh <clientosh@localhost>")
-set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/clientosh/clientosh")
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/hdmain/clientosh")
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
     set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
 endif()
@@ -413,7 +414,7 @@ if(UNIX AND NOT APPLE)
     set(CPACK_RPM_PACKAGE_SUMMARY "Raw dark-gray SSH client (Qt 6 + libssh)")
     set(CPACK_RPM_PACKAGE_LICENSE "MIT")
     set(CPACK_RPM_PACKAGE_GROUP "Applications/Internet")
-    set(CPACK_RPM_PACKAGE_URL "https://github.com/clientosh/clientosh")
+    set(CPACK_RPM_PACKAGE_URL "https://github.com/hdmain/clientosh")
     set(CPACK_RPM_PACKAGE_RELOCATABLE OFF)
     set(CPACK_RPM_FILE_NAME "RPM-DEFAULT")
     set(CPACK_RPM_PACKAGE_AUTOREQ ON)

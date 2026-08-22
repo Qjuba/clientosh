@@ -32,7 +32,7 @@ int main(int argc, char* argv[])
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/terminal.svg")));
 
     QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("clientosh — ssh client"));
+    parser.setApplicationDescription(QStringLiteral("clientosh - SSH, SFTP, and Telnet client"));
     parser.addHelpOption();
     parser.addVersionOption();
     QCommandLineOption verboseOpt({QStringLiteral("v"), QStringLiteral("verbose")},

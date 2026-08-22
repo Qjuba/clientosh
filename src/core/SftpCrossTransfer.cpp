@@ -1,6 +1,7 @@
 #include "SftpCrossTransfer.h"
 #include "core/AppSettings.h"
 #include "core/PrivateKeyLoader.h"
+#include "core/SshPasswordAuth.h"
 
 #include <libssh/libssh.h>
 #include <libssh/sftp.h>
@@ -171,11 +172,11 @@ bool SftpCrossTransfer::connectSftp(const SessionProfile& profile, void** sessio
     }
 
     if (!keySuccess && hasPassword) {
-        const int pra = ssh_userauth_password(session, nullptr, profile.password.toUtf8().constData());
-        if (pra != SSH_AUTH_SUCCESS) {
-            const QString e = QString::fromUtf8(ssh_get_error(session));
+        QString authErr;
+        if (!sshUserauthPasswordFlexible(session, profile.password, profile.user, &authErr)) {
             if (errOut) {
-                *errOut = QStringLiteral("auth failed for %1@%2: %3").arg(profile.user, profile.host, e);
+                *errOut = QStringLiteral("auth failed for %1@%2: %3")
+                              .arg(profile.user, profile.host, authErr);
             }
             ssh_disconnect(session);
             ssh_free(session);

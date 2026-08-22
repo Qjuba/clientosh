@@ -2,6 +2,7 @@
 
 #include "core/AppSettings.h"
 #include "core/PrivateKeyLoader.h"
+#include "core/SshPasswordAuth.h"
 
 #include <libssh/libssh.h>
 #include <libssh/sftp.h>
@@ -309,11 +310,12 @@ bool SftpClient::authenticate(const SessionProfile& profile, QString* errorOut)
 
     vlog(QStringLiteral("authenticate: trying password auth for user '%1'").arg(profile.user));
     emit statusChanged(QStringLiteral("authenticating with password..."));
-    if (ssh_userauth_password(session, nullptr, profile.password.toUtf8().constData()) != SSH_AUTH_SUCCESS) {
-        const QString detail = QString::fromUtf8(ssh_get_error(session));
-        vlog(QStringLiteral("authenticate: password auth failed: %1").arg(detail));
+    QString authErr;
+    if (!sshUserauthPasswordFlexible(session, profile.password, profile.user, &authErr)) {
+        vlog(QStringLiteral("authenticate: password/kbdint auth failed: %1").arg(authErr));
         if (errorOut) {
-            *errorOut = QStringLiteral("auth failed for %1@%2: %3").arg(profile.user, profile.host, detail);
+            *errorOut = QStringLiteral("auth failed for %1@%2: %3")
+                            .arg(profile.user, profile.host, authErr);
         }
         return false;
     }

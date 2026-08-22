@@ -5,11 +5,15 @@
 <h1 align="center">clientosh</h1>
 
 <p align="center">
-  <b>A raw, dark-gray SSH client with a split-pane terminal tired of tab-juggling, made for people who live on the command line.</b>
+  <b>A lightweight multiplatform SSH, SFTP, and Telnet client with a split-pane terminal - made for people who live on the command line.</b>
 </p>
 
 <p align="center">
-  Terminal and SFTP live side-by-side in a <b>single window</b>. Drag, split, dock, detach. Zero fuss, real SSH.
+  Terminal, SFTP, and Telnet live side-by-side in a <b>single window</b>. Drag, split, dock, detach. Zero fuss, real connections.
+</p>
+
+<p align="center">
+  <a href="https://github.com/hdmain/clientosh"><b>github.com/hdmain/clientosh</b></a>
 </p>
 
 <br/>
@@ -62,7 +66,8 @@
 - **🪶 Lightweight & native** - idles at roughly **~30 MB RAM**, because clientosh is written native against **Qt 6 widgets in C++** - no Electron, no bundled Chromium, no JVM. It launches in a blink and stays out of your memory even with many panes open.
 - **🧱 Split-pane workspace, single window** - drag a session chip onto a live pane to preview the viewport, then drop onto a `Left` / `Right` / `Top` / `Bottom` zone to dock. Terminal **and** SFTP panes share one OS window with animated, eased splitter morphing.
 - **🔒 Layer-0 secure vault** - session metadata and secrets are encrypted at rest with **AES-256-GCM** (OpenSSL EVP), backed by your OS keyring: **Windows Credential Manager, macOS Keychain, and Secret Service (libsecret)** - with a machine-bound encrypted-file fallback that keeps things working headless.
-- **🗝️ Battle-tested private-key auth** - import and save SSH keys *into the keyring itself*, pick them from a dropdown, and decrypt passphrase-protected keys on the fly. Decrypted payloads are **zeroed in memory** after use.
+- **🗝️ Battle-tested private-key auth** - import and save SSH keys *into the keyring itself*, pick them from a dropdown, and decrypt passphrase-protected keys on the fly. Decrypted payloads are **zeroed in memory** after use. Password auth falls back to **keyboard-interactive** when a server disables plain password auth.
+- **📡 Telnet terminal** - connect to Telnet hosts (port 23) with NAWS resize support, alongside SSH sessions in the same workspace.
 - **⚡ Non-blocking threading model** - SSH auth, shell I/O, SFTP, and live stats all run on **worker threads**; the GUI never freezes on connect or auth.
 - **🖥️ Hand-rolled VT100/xterm emulator** - full scrollback buffer, 256-color + true SGR attributes, alt-screen, mouse reporting & tracking, box-drawing glyphs, DEC character sets, and live keyword/address highlighting - all in pure Qt widgets.
 - **📁 Bundled SFTP file manager** - browse, upload, download, and delete remote files for the active session, with details/compact views.
@@ -71,6 +76,7 @@
 - **🪟 Detach & re-attach** - pull a terminal out into its own viewport, then dock it right back into the workspace.
 - **🎨 Raw dark UI with motion** - flat, high-contrast monospace theme with subtle eased glows and hover fills (`src/ui/Motion`), plus a light theme, adjustable fonts, and optional blurred background images.
 - **🔧 Single-source-of-truth builds** - version bumped once in `project(...)` flows through the About tab, Windows RC resources, NSIS/Inno installers, and package metadata automatically.
+- **🧩 Addon marketplace** - browse and install optional addons from a remote catalog (Settings → Addons); nothing loads until you install and enable it.
 
 > 💡 **What makes clientosh "fast"?** It's a **native Qt 6 / C++** app - no Electron or web-view overhead - so it's snappy to launch and sips about **~30 MB RAM**. Network I/O never touches the UI thread, the vault decrypts near-instantly via an in-memory machine-bound key (no keyring/DPAPI latency at launch), and animations are vsync-paced with no continuous timers while idle.
 
@@ -93,7 +99,7 @@
 |---|---|
 | **Language** | C++17 |
 | **UI toolkit** | Qt 6 (`Widgets`, `Network`, `Svg`) |
-| **SSH / SFTP** | libssh 2.x |
+| **SSH / SFTP / Telnet** | libssh 2.x (SSH/SFTP) · native Telnet (Qt Network) |
 | **Cryptography** | OpenSSL EVP - AES-256-GCM authenticated encryption |
 | **Keyring** | Windows Credential Manager · macOS Keychain · libsecret (dlopen) |
 | **Build system** | CMake ≥ 3.21 + Ninja / Unix Makefiles / MinGW Makefiles |
@@ -124,18 +130,21 @@ flowchart TB
     subgraph Backend["core - worker threads"]
         direction TB
         Ssh["SshSession (QThread)"]
+        Telnet["TelnetSession (QThread)"]
         Mgr["SessionManager"]
         Stats["ServerStatsClient (worker)"]
         Font["FontManager"]
         Sftp["SftpClient (worker)"]
         Cross["SftpCrossTransfer<br/>(server→server staging)"]
         Ssh --> Mgr
+        Telnet --> Mgr
         Stats --> Mgr
         Sftp --> Mgr
         Cross --> Mgr
     end
 
     FrameTerm --> Ssh
+    FrameTerm --> Telnet
     FrameSftp --> Sftp
     FrameSftp --> Cross
 
@@ -264,13 +273,13 @@ sudo apt install ./build-deb/clientosh_*.deb
 
 ### 1. Add a session
 
-From the dashboard, give a session a **name**, **host**, **port**, and **user**. Choose SSH (interactive terminal) or SFTP-only mode.
+From the dashboard, give a session a **name**, **host**, **port**, and **user**. Choose **SSH** (terminal + SFTP), **Telnet** (terminal only), or **SFTP-only** mode.
 
 > By default, saved credentials are *rejected* unless you explicitly opt in to store a password - secrets live only in the encrypted keyring vault, never in plaintext.
 
 ### 2. Connect
 
-Authenticate with a **password** or a **private key**. Pick a pre-saved key straight from the keyring dropdown, or point to a key on disk (optionally passphrase-protected).
+Authenticate with a **password** or a **private key**. Pick a pre-saved key straight from the keyring dropdown, or point to a key on disk (optionally passphrase-protected). If the server rejects plain password auth, clientosh automatically retries via **keyboard-interactive**.
 
 ### 3. Split panes
 
@@ -357,6 +366,9 @@ Settings are persisted with Qt's `QSettings` (registry on Windows, INI/plist els
 - [x] Live server stats polling
 - [x] Dark & light themes, fonts, background images
 - [x] Cross-distro packaging (deb / rpm / AppImage / Arch / dmg / Inno / NSIS)
+- [x] Telnet terminal sessions
+- [x] Password auth with keyboard-interactive fallback
+- [x] Addon marketplace (install from catalog)
 - [ ] **Host-key verification** (see security note below)
 - [ ] SSH agent forwarding / SOCKS proxy / TCP forwarding
 - [ ] Multi-host broadcast / scripted command sender
@@ -370,7 +382,7 @@ Settings are persisted with Qt's `QSettings` (registry on Windows, INI/plist els
 
 Contributions are welcome! Please:
 
-1. **Fork** the repository.
+1. **Fork** [hdmain/clientosh](https://github.com/hdmain/clientosh).
 2. Create a feature branch (`git checkout -b feat/my-change`).
 3. Keep builds clean on **Linux, macOS, and Windows**.
 4. Open a **pull request** against `main`.

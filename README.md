@@ -12,10 +12,6 @@
   Terminal, SFTP, and Telnet live side-by-side in a <b>single window</b>. Drag, split, dock, detach. Zero fuss, real connections.
 </p>
 
-<p align="center">
-  <a href="https://github.com/hdmain/clientosh"><b>github.com/hdmain/clientosh</b></a>
-</p>
-
 <br/>
 
 <p align="center">
@@ -322,6 +318,44 @@ Enable verbose mode with **Settings → SFTP → verbose logging**.
 | Close panel | `Ctrl+W` |
 | Open SFTP | `Ctrl+Shift+S` |
 | Font bigger / smaller / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
+
+### Command-line quick connect
+
+Launch straight into a session without using the dashboard:
+
+```bash
+# Telnet
+clientosh telnet 192.168.0.1:23 -name Router
+clientosh telnet switch.local -u admin -name Core-SW
+
+# SSH
+clientosh ssh user@prod.example.com -name Production
+clientosh ssh 10.0.0.5:2222 -u admin -name Jump
+clientosh ssh host -i ~/.ssh/id_ed25519 -u root -name Root
+
+# SSH + SFTP pane
+clientosh ssh deploy@files.example.com --sftp -name Deploy
+
+# SFTP only
+clientosh sftp user@files.example.com -name Files
+clientosh sftp backup.local:2222 -u backup -name Backups
+```
+
+**Target formats:** `host`, `host:port`, `user@host`, `user@host:port` (IPv6: `[::1]:port`).
+
+| Option | Description |
+|---|---|
+| `-name`, `--name` | Tab / pane title |
+| `-u`, `--user` | Username (overrides `user@` in target) |
+| `-P`, `--port` | Port (overrides `:port` in target) |
+| `-p`, `--password` | Password for this session only (not saved) |
+| `-i`, `--identity` | Private key file |
+| `--keyring` | Saved keyring key id |
+| `--key-passphrase` | Passphrase for an encrypted key |
+| `--sftp` | With `ssh`, also open an SFTP pane |
+| `--verbose` | Verbose SFTP logging |
+
+Run `clientosh` with no arguments to open the dashboard. See `clientosh --help` for the full list.
 
 <br/>
 

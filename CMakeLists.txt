@@ -145,6 +145,8 @@ add_executable(clientosh
     src/core/KeyringAdapter.cpp
     src/core/VaultManager.h
     src/core/VaultManager.cpp
+    src/core/CliLaunch.h
+    src/core/CliLaunch.cpp
     src/core/PrivateKeyLoader.h
     src/core/SshPasswordAuth.h
     src/core/sync/SyncKey.h
@@ -186,6 +188,8 @@ add_executable(clientosh
     src/SftpWindow.cpp
     src/platform/WindowStayOnTop.h
     src/platform/WindowStayOnTop.cpp
+    src/platform/ConsoleAttach.h
+    src/platform/ConsoleAttach.cpp
     src/ui/Motion.h
     src/ui/Motion.cpp
     resources.qrc
@@ -221,7 +225,9 @@ endif()
 
 if(WIN32)
     target_link_libraries(clientosh PRIVATE ws2_32 advapi32)
-    set_target_properties(clientosh PROPERTIES WIN32_EXECUTABLE TRUE)
+    # CONSOLE subsystem: --help/--version print to the terminal in PowerShell/cmd.
+    # GUI-only launches (no args) detach the console immediately in main().
+    set_target_properties(clientosh PROPERTIES WIN32_EXECUTABLE FALSE)
 
     # Bundle runtime DLLs next to the exe when building against MSYS2/custom prefix
     if(LIBSSH_ROOT)

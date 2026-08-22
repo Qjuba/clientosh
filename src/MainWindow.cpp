@@ -343,6 +343,23 @@ void MainWindow::openProfileSftpOnly(const SessionProfile& profile)
     openStandaloneSftp(profile);
 }
 
+void MainWindow::launchFromCli(const SessionProfile& profile, bool openSftpWithSsh)
+{
+    if (profile.isSftpOnly()) {
+        openStandaloneSftp(profile);
+        showWorkspace();
+        m_topNav->refresh();
+        return;
+    }
+
+    if (openSftpWithSsh && !profile.isTelnet()) {
+        openProfileThenSftp(profile);
+        return;
+    }
+
+    beginTerminalSession(profile, false);
+}
+
 void MainWindow::wireSessionTerminal(const QString& id, TerminalWidget* term)
 {
     if (!term) {

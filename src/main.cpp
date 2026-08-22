@@ -1,15 +1,19 @@
 #include "MainWindow.h"
 #include "PlatformFonts.h"
 #include "core/AppSettings.h"
+#include "core/CliLaunch.h"
 #include "core/FontManager.h"
+#include "platform/ConsoleAttach.h"
 #include "ui/Motion.h"
 
 #include <libssh/libssh.h>
 
+#include <cstdio>
+
 #include <QApplication>
-#include <QCommandLineParser>
 #include <QIcon>
 #include <QStyleFactory>
+#include <QTimer>
 
 #ifdef Q_OS_WIN
 #include <winsock2.h>
@@ -18,9 +22,27 @@
 int main(int argc, char* argv[])
 {
 #ifdef Q_OS_WIN
+    if (argc <= 1) {
+        clientoshHideConsoleForGuiLaunch();
+    }
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 #endif
+
+    CliLaunch::Request cliRequest;
+    bool cliConnect = false;
+    bool verbose = false;
+
+    if (argc > 1) {
+        const int headlessCode =
+            CliLaunch::runHeadlessPhase(argc, argv, &cliRequest, &cliConnect, &verbose);
+        if (headlessCode >= 0) {
+#ifdef Q_OS_WIN
+            WSACleanup();
+#endif
+            return headlessCode;
+        }
+    }
 
     ssh_init();
 
@@ -31,15 +53,7 @@ int main(int argc, char* argv[])
     app.setOrganizationName(QStringLiteral("clientosh"));
     app.setWindowIcon(QIcon(QStringLiteral(":/icons/terminal.svg")));
 
-    QCommandLineParser parser;
-    parser.setApplicationDescription(QStringLiteral("clientosh - SSH, SFTP, and Telnet client"));
-    parser.addHelpOption();
-    parser.addVersionOption();
-    QCommandLineOption verboseOpt({QStringLiteral("v"), QStringLiteral("verbose")},
-                                  QStringLiteral("Enable verbose SFTP debug logging (also: Settings > SFTP)."));
-    parser.addOption(verboseOpt);
-    parser.process(app);
-    if (parser.isSet(verboseOpt)) {
+    if (verbose) {
         AppSettings::setSftpVerboseLogging(true);
     }
 
@@ -50,6 +64,14 @@ int main(int argc, char* argv[])
 
     MainWindow window;
     window.show();
+
+    if (cliConnect) {
+        const SessionProfile profile = cliRequest.profile;
+        const bool withSftp = cliRequest.openSftpWithSsh;
+        QTimer::singleShot(0, &window, [&window, profile, withSftp]() {
+            window.launchFromCli(profile, withSftp);
+        });
+    }
 
     const int code = app.exec();
 

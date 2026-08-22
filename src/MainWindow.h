@@ -24,6 +24,9 @@ class MainWindow : public QMainWindow
 public:
     explicit MainWindow(QWidget* parent = nullptr);
 
+    /** Open a session requested from the command line (after the window is shown). */
+    void launchFromCli(const SessionProfile& profile, bool openSftpWithSsh);
+
 protected:
     void closeEvent(QCloseEvent* event) override;
     void showEvent(QShowEvent* event) override;

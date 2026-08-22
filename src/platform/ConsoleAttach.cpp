@@ -5,7 +5,6 @@
 #    define WIN32_LEAN_AND_MEAN
 #  endif
 #  include <windows.h>
-#  include <io.h>
 #endif
 
 #include <cstdio>
@@ -23,6 +22,20 @@ void clientoshEnsureConsoleForCli()
 #endif
 }
 
+bool clientoshStdoutIsRedirected()
+{
+#ifdef Q_OS_WIN
+    const HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hOut == nullptr || hOut == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+    const DWORD fileType = GetFileType(hOut);
+    return fileType == FILE_TYPE_PIPE || fileType == FILE_TYPE_DISK;
+#else
+    return false;
+#endif
+}
+
 void clientoshCliWrite(const char* utf8)
 {
     if (!utf8 || utf8[0] == '\0') {
@@ -32,8 +45,7 @@ void clientoshCliWrite(const char* utf8)
 #ifdef Q_OS_WIN
     clientoshEnsureConsoleForCli();
 
-    const bool stdoutIsTTY = _isatty(_fileno(stdout)) != 0;
-    if (stdoutIsTTY && GetConsoleWindow() != nullptr) {
+    if (!clientoshStdoutIsRedirected() && GetConsoleWindow() != nullptr) {
         HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
         if (hOut != nullptr && hOut != INVALID_HANDLE_VALUE) {
             const QString text = QString::fromUtf8(utf8);
@@ -49,17 +61,4 @@ void clientoshCliWrite(const char* utf8)
 
     std::fputs(utf8, stdout);
     std::fflush(stdout);
-}
-
-void clientoshHideConsoleForGuiLaunch()
-{
-#ifdef Q_OS_WIN
-    if (AttachConsole(ATTACH_PARENT_PROCESS)) {
-        FreeConsole();
-        return;
-    }
-    if (GetConsoleWindow() != nullptr) {
-        FreeConsole();
-    }
-#endif
 }

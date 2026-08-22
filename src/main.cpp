@@ -3,7 +3,6 @@
 #include "core/AppSettings.h"
 #include "core/CliLaunch.h"
 #include "core/FontManager.h"
-#include "platform/ConsoleAttach.h"
 #include "ui/Motion.h"
 
 #include <libssh/libssh.h>
@@ -22,9 +21,6 @@
 int main(int argc, char* argv[])
 {
 #ifdef Q_OS_WIN
-    if (argc <= 1) {
-        clientoshHideConsoleForGuiLaunch();
-    }
     WSADATA wsaData;
     WSAStartup(MAKEWORD(2, 2), &wsaData);
 #endif

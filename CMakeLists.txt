@@ -225,9 +225,9 @@ endif()
 
 if(WIN32)
     target_link_libraries(clientosh PRIVATE ws2_32 advapi32)
-    # CONSOLE subsystem: --help/--version print to the terminal in PowerShell/cmd.
-    # GUI-only launches (no args) detach the console immediately in main().
-    set_target_properties(clientosh PROPERTIES WIN32_EXECUTABLE FALSE)
+    # WINDOWS subsystem: no console flash when opening the GUI with no args.
+    # CLI output uses AttachConsole / WriteConsoleW (see ConsoleAttach.cpp).
+    set_target_properties(clientosh PROPERTIES WIN32_EXECUTABLE TRUE)
 
     # Bundle runtime DLLs next to the exe when building against MSYS2/custom prefix
     if(LIBSSH_ROOT)

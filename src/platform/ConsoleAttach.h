@@ -14,5 +14,3 @@ inline void clientoshCliWrite(const QString& text)
     clientoshCliWrite(bytes.constData());
 }
 
-/** When launching the GUI with no CLI args, hide/detach any console window. Windows only. */
-void clientoshHideConsoleForGuiLaunch();

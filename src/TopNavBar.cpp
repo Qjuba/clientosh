@@ -1,10 +1,13 @@
 #include "TopNavBar.h"
 #include "SessionChip.h"
 #include "SessionWorkspace.h"
+#include "SftpWindow.h"
 #include "core/AppSettings.h"
 #include "core/SessionManager.h"
 #include "ui/Motion.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QHBoxLayout>
@@ -371,6 +374,28 @@ void TopNavBar::showPanelContextMenu(const PanelRef& ref, const QPoint& globalPo
     connect(save, &QAction::triggered, this, [this, ref]() {
         emit savePanelRequested(ref);
     });
+
+    QString host;
+    bool serial = false;
+    if (m_sessions) {
+        if (const auto* live = m_sessions->session(ref.sessionId)) {
+            host = live->profile.host.trimmed();
+            serial = live->profile.isSerial();
+        }
+    }
+    if (host.isEmpty() && ref.kind == PanelKind::Sftp) {
+        if (auto* sftp = qobject_cast<SftpWindow*>(m_workspace->sftpWidget(ref.sessionId))) {
+            host = sftp->profile().host.trimmed();
+            serial = sftp->profile().isSerial();
+        }
+    }
+    if (!host.isEmpty()) {
+        auto* copyHost = menu.addAction(serial ? QStringLiteral("Copy Port Name")
+                                               : QStringLiteral("Copy Hostname"));
+        connect(copyHost, &QAction::triggered, this, [host]() {
+            QApplication::clipboard()->setText(host);
+        });
+    }
 
     auto* split = menu.addMenu(QStringLiteral("Split screen"));
     const bool canSplit = m_workspace->canSplitPanel(ref);

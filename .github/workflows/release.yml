@@ -64,7 +64,7 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          name: clientosh ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
           prerelease: false
           files: dist/*
           body_path: RELEASE_BODY.md

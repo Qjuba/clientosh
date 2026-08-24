@@ -25,7 +25,7 @@ jobs:
     env:
       PACKAGE_LABEL: ${{ inputs.package_label }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
 
@@ -93,7 +93,7 @@ jobs:
           powershell -NoProfile -Command "Compress-Archive -Path 'build-win/*' -DestinationPath 'clientosh-${PACKAGE_LABEL}-win64-portable.zip' -Force"
 
       - name: Upload Windows packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: windows-assets
           path: |
@@ -107,7 +107,7 @@ jobs:
     env:
       PACKAGE_LABEL: ${{ inputs.package_label }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
 
@@ -173,7 +173,7 @@ jobs:
           cp "$appimage" "clientosh-${PACKAGE_LABEL}-x86_64.AppImage"
 
       - name: Upload Linux packages
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: linux-assets
           path: |
@@ -189,7 +189,7 @@ jobs:
     env:
       PACKAGE_LABEL: ${{ inputs.package_label }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
 
@@ -214,18 +214,21 @@ jobs:
             pacman -Sy --noconfirm --needed \
               qt6-base qt6-svg libssh openssl cmake ninja pkgconf
             useradd -m builder
-            chown -R builder:builder /work
+            chown -R builder:builder /work/packaging/arch
             runuser -u builder -- makepkg -sf --noconfirm
           EOF
 
       - name: Normalize Arch package
         run: |
-          package=$(find packaging/arch -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)
+          package=$(find packaging/arch -maxdepth 1 \
+            -name 'clientosh-*.pkg.tar.zst' \
+            ! -name 'clientosh-debug-*' \
+            -print -quit)
           test -n "$package"
           cp "$package" "clientosh-${PACKAGE_LABEL}-x86_64.pkg.tar.zst"
 
       - name: Upload Arch package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: arch-assets
           path: clientosh-${{ inputs.package_label }}-x86_64.pkg.tar.zst
@@ -237,7 +240,7 @@ jobs:
     env:
       PACKAGE_LABEL: ${{ inputs.package_label }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.source_ref }}
 
@@ -284,7 +287,7 @@ jobs:
             -ov -format UDZO "clientosh-${PACKAGE_LABEL}-macos.dmg"
 
       - name: Upload macOS package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: macos-assets
           path: clientosh-${{ inputs.package_label }}-macos.dmg

@@ -2456,6 +2456,12 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
     if (line.trimmed().isEmpty()) {
         return colors;
     }
+    // The application inserts this standalone status line when a session
+    // opens. Keep it neutral while still highlighting "connected" in actual
+    // device output (for example, interface status tables).
+    if (line.trimmed().compare(QStringLiteral("connected"), Qt::CaseInsensitive) == 0) {
+        return colors;
+    }
 
     static const QRegularExpression neutralUnreachableCommand(
         QStringLiteral(

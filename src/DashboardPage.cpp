@@ -207,6 +207,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_searchEdit->setClearButtonEnabled(true);
     m_searchEdit->setMinimumWidth(200);
     m_searchEdit->setMaximumWidth(320);
+    m_searchEdit->setFixedHeight(30);
     topLay->addWidget(m_searchEdit, 1);
 
     m_newSessionBtn = new QPushButton(QIcon(QStringLiteral(":/icons/plus.svg")),
@@ -214,6 +215,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_newSessionBtn->setObjectName(QStringLiteral("dashPrimary"));
     m_newSessionBtn->setIconSize(QSize(13, 13));
     m_newSessionBtn->setFocusPolicy(Qt::NoFocus);
+    m_newSessionBtn->setFixedHeight(30);
     topLay->addWidget(m_newSessionBtn);
 
     mainLay->addWidget(m_topBar);
@@ -301,7 +303,9 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_savedEmpty->setObjectName(QStringLiteral("dashHint"));
     m_savedEmpty->setAlignment(Qt::AlignCenter);
     m_savedEmpty->hide();
-    hostsLay->addWidget(m_savedEmpty);
+    // Let the empty state take over the table's flexible area. This keeps the
+    // status hint anchored at the bottom when the last host is removed.
+    hostsLay->addWidget(m_savedEmpty, 1);
 
     m_hint = new QLabel(QStringLiteral(""), m_hostsPage);
     m_hint->setObjectName(QStringLiteral("dashHint"));
@@ -327,7 +331,8 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_keysEmpty = new QLabel(QStringLiteral("no stored credentials"), m_keysPage);
     m_keysEmpty->setObjectName(QStringLiteral("dashHint"));
     m_keysEmpty->setAlignment(Qt::AlignCenter);
-    keysLay->addWidget(m_keysEmpty);
+    // Match the Hosts empty-state geometry by filling the table area.
+    keysLay->addWidget(m_keysEmpty, 1);
     m_stack->addWidget(m_keysPage);
 
     // ---- Logs page ----

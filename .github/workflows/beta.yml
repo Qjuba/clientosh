@@ -65,9 +65,10 @@ jobs:
           git push origin refs/tags/beta --force
 
       - name: Publish GitHub prerelease
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: beta
+          target_commitish: ${{ github.sha }}
           name: Beta (latest main)
           prerelease: true
           files: dist/*

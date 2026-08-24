@@ -15,10 +15,13 @@
 #include <QCloseEvent>
 #include <QEvent>
 #include <QEventLoop>
+#include <QFileDialog>
+#include <QFileInfo>
 #include <QIcon>
 #include <QMenu>
 #include <QMessageBox>
 #include <QPointer>
+#include <QProgressDialog>
 #include <QRegularExpression>
 #include <QSet>
 #include <QSettings>
@@ -139,6 +142,9 @@ MainWindow::MainWindow(QWidget* parent)
             [this](const QString& id, bool connected) {
                 if (TerminalWidget* term = findTerminal(id)) {
                     term->setInteractive(connected);
+                    const auto* liveForTransfer = m_sessions->session(id);
+                    term->setXmodemAvailable(connected && liveForTransfer
+                                             && liveForTransfer->profile.isSerial());
                     if (connected) {
                         // Replace the temporary startup message instead of leaving
                         // a stale "connecting..." line after the socket is ready.
@@ -184,7 +190,52 @@ MainWindow::MainWindow(QWidget* parent)
                 m_dashboard->refresh();
             });
 
+    connect(m_sessions, &SessionManager::xmodemStarted, this,
+            [this](const QString& id, qint64 totalBytes) {
+                if (QProgressDialog* dialog = m_xmodemProgressDialogs.value(id)) {
+                    dialog->setLabelText(QStringLiteral("Waiting for the receiver · %1 MiB")
+                                             .arg(double(totalBytes) / (1024.0 * 1024.0), 0, 'f', 1));
+                }
+            });
+    connect(m_sessions, &SessionManager::xmodemProgress, this,
+            [this](const QString& id, qint64 sentBytes, qint64 totalBytes, int retries) {
+                if (QProgressDialog* dialog = m_xmodemProgressDialogs.value(id)) {
+                    const int progress = totalBytes > 0
+                        ? int(qMin<qint64>(1000, sentBytes * 1000 / totalBytes)) : 0;
+                    dialog->setValue(progress);
+                    dialog->setLabelText(QStringLiteral("Sending via XMODEM · %1 / %2 MiB · retries %3")
+                                             .arg(double(sentBytes) / (1024.0 * 1024.0), 0, 'f', 1)
+                                             .arg(double(totalBytes) / (1024.0 * 1024.0), 0, 'f', 1)
+                                             .arg(retries));
+                }
+            });
+    connect(m_sessions, &SessionManager::xmodemFinished, this, [this](const QString& id) {
+        closeXmodemProgress(id);
+        if (TerminalWidget* term = findTerminal(id)) {
+            const auto* live = m_sessions->session(id);
+            term->setInteractive(live && live->connected);
+            term->setXmodemAvailable(live && live->connected && live->profile.isSerial());
+            term->appendOutput(QByteArray("\r\n[XMODEM transfer completed]\r\n"));
+        }
+    });
+    connect(m_sessions, &SessionManager::xmodemError, this,
+            [this](const QString& id, const QString& message) {
+                const bool hadDialog = m_xmodemProgressDialogs.contains(id);
+                closeXmodemProgress(id);
+                if (TerminalWidget* term = findTerminal(id)) {
+                    const auto* live = m_sessions->session(id);
+                    term->setInteractive(live && live->connected);
+                    term->setXmodemAvailable(live && live->connected && live->profile.isSerial());
+                    term->appendOutput((QStringLiteral("\r\n[XMODEM error] ") + message
+                                        + QStringLiteral("\r\n")).toUtf8());
+                }
+                if (hadDialog && message != QLatin1String("transfer cancelled")) {
+                    QMessageBox::warning(this, QStringLiteral("XMODEM"), message);
+                }
+            });
+
     connect(m_sessions, &SessionManager::sessionClosed, this, [this](const QString& id) {
+        closeXmodemProgress(id);
         if (m_pendingSftpSessionId == id) {
             m_pendingSftpSessionId.clear();
         }
@@ -398,6 +449,8 @@ void MainWindow::wireSessionTerminal(const QString& id, TerminalWidget* term)
     connect(term, &TerminalWidget::inputReady, this, [this, id](const QByteArray& data) {
         m_sessions->sendData(id, data);
     });
+    connect(term, &TerminalWidget::xmodemSendRequested, this,
+            [this, id]() { startXmodemTransfer(id); });
     connect(term, &TerminalWidget::ptySizeChanged, this, [this, id](int cols, int rows) {
         // Always update pending size so auth/PTY open use the laid-out dimensions.
         m_sessions->resizePty(id, cols, rows);
@@ -412,6 +465,62 @@ void MainWindow::wireSessionTerminal(const QString& id, TerminalWidget* term)
         }
         m_dashboard->syncTerminalFontSizeUi(points);
     });
+}
+
+void MainWindow::startXmodemTransfer(const QString& id)
+{
+    const auto* live = m_sessions->session(id);
+    if (!live || !live->serial || !live->connected) {
+        QMessageBox::warning(this, QStringLiteral("XMODEM"),
+                             QStringLiteral("Connect a serial session before starting XMODEM."));
+        return;
+    }
+
+    const QString path = QFileDialog::getOpenFileName(
+        this, QStringLiteral("Select file to send via XMODEM"), QString(),
+        QStringLiteral("Cisco images (*.bin *.tar);;All files (*)"));
+    if (path.isEmpty()) return;
+
+    const QFileInfo info(path);
+    const QString prompt = QStringLiteral(
+        "Make sure the device is already waiting for XMODEM input.\n\n"
+        "File: %1\nSize: %2 MiB\n\nStart sending?")
+        .arg(info.fileName())
+        .arg(double(info.size()) / (1024.0 * 1024.0), 0, 'f', 1);
+    if (QMessageBox::question(this, QStringLiteral("Start XMODEM transfer"), prompt,
+                              QMessageBox::Yes | QMessageBox::No, QMessageBox::No)
+        != QMessageBox::Yes) {
+        return;
+    }
+
+    closeXmodemProgress(id);
+    auto* progress = new QProgressDialog(QStringLiteral("Waiting for the XMODEM receiver…"),
+                                         QStringLiteral("Cancel"), 0, 1000, this);
+    progress->setWindowTitle(QStringLiteral("XMODEM · %1").arg(info.fileName()));
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+    progress->setValue(0);
+    m_xmodemProgressDialogs.insert(id, progress);
+    connect(progress, &QProgressDialog::canceled, this,
+            [this, id]() { m_sessions->cancelXmodem(id); });
+
+    if (TerminalWidget* term = findTerminal(id)) {
+        term->setInteractive(false);
+        term->setXmodemAvailable(false);
+        term->appendOutput(QByteArray("\r\n[XMODEM transfer starting]\r\n"));
+    }
+    m_sessions->startXmodem(id, path);
+}
+
+void MainWindow::closeXmodemProgress(const QString& id)
+{
+    if (QProgressDialog* dialog = m_xmodemProgressDialogs.take(id)) {
+        dialog->blockSignals(true);
+        dialog->close();
+        dialog->deleteLater();
+    }
 }
 
 void MainWindow::setupShortcuts()
@@ -455,6 +564,19 @@ void MainWindow::setupShortcuts()
             openSftpFromSession(id);
         }
     });
+    make(m_scClearTerminal, [this]() {
+        TerminalWidget* term = qobject_cast<TerminalWidget*>(QApplication::focusWidget());
+        if (!term && m_rootStack->currentWidget() == m_workspace) {
+            const PanelRef active = m_workspace->activePanel();
+            if (active.isValid() && active.kind == PanelKind::Terminal) {
+                term = findTerminal(active.sessionId);
+            }
+        }
+        if (term) {
+            term->clearTerminal();
+            term->setFocus(Qt::ShortcutFocusReason);
+        }
+    });
     make(m_scFontLarger, [this]() { adjustAllTerminalFonts(1, false); });
     make(m_scFontSmaller, [this]() { adjustAllTerminalFonts(-1, false); });
     make(m_scFontReset, [this]() { adjustAllTerminalFonts(11, true); });
@@ -476,6 +598,7 @@ void MainWindow::rebindShortcuts()
     bind(m_scDashboard, AppSettings::shortcutDashboard());
     bind(m_scClosePanel, AppSettings::shortcutClosePanel());
     bind(m_scOpenSftp, AppSettings::shortcutOpenSftp());
+    bind(m_scClearTerminal, AppSettings::shortcutClearTerminal());
     bind(m_scFontLarger, AppSettings::shortcutFontLarger());
     bind(m_scFontSmaller, AppSettings::shortcutFontSmaller());
     bind(m_scFontReset, AppSettings::shortcutFontReset());

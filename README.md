@@ -64,7 +64,7 @@
 - **🔒 Layer-0 secure vault** - session metadata and secrets are encrypted at rest with **AES-256-GCM** (OpenSSL EVP), backed by your OS keyring: **Windows Credential Manager, macOS Keychain, and Secret Service (libsecret)** - with a machine-bound encrypted-file fallback that keeps things working headless.
 - **🗝️ Central SSH key management** - use your **SSH agent**, import reusable keys into the encrypted vault, or select a key file. Stored keys have OpenSSH-compatible SHA-256 fingerprints, per-key passphrases, and usage protection. Decrypted payloads are **zeroed in memory** after use.
 - **📡 Telnet terminal** - connect to Telnet hosts (port 23) with NAWS resize support, alongside SSH sessions in the same workspace.
-- **🔌 Serial / COM terminal** - connect directly to local serial devices with configurable baud rate, data bits, parity, stop bits, and hardware/software flow control.
+- **🔌 Serial / COM terminal** - connect directly to local serial devices with configurable baud rate, data bits, parity, stop bits, and hardware/software flow control. Connected serial terminals can send recovery images through XMODEM with checksum/CRC-16 negotiation, retry handling, progress, and cancellation.
 - **⚡ Non-blocking threading model** - SSH auth, shell I/O, SFTP, and live stats all run on **worker threads**; the GUI never freezes on connect or auth.
 - **🖥️ Hand-rolled VT100/xterm emulator** - full scrollback buffer, 256-color + true SGR attributes, alt-screen, mouse reporting & tracking, box-drawing glyphs, DEC character sets, and live keyword/address highlighting - all in pure Qt widgets.
 - **📁 Bundled SFTP file manager** - browse, upload, download, and delete remote files for the active session, with details/compact views.
@@ -337,6 +337,7 @@ Enable verbose mode with **Settings → SFTP → verbose logging**.
 | Dashboard | `Ctrl+Shift+D` |
 | Close panel | `Ctrl+W` |
 | Open SFTP | `Ctrl+Shift+S` |
+| Clear active terminal | `Ctrl+Shift+K` |
 | Font bigger / smaller / reset | `Ctrl+=` / `Ctrl+-` / `Ctrl+0` |
 
 ### Command-line interface

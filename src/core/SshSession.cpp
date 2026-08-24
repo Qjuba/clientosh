@@ -55,6 +55,9 @@ QString detectSystemFromBanner(ssh_session session)
     if (low.contains("kali")) {
         return QStringLiteral("Kali");
     }
+    if (low.contains("alpine")) {
+        return QStringLiteral("Alpine Linux");
+    }
     if (low.contains("arch")) {
         return QStringLiteral("Arch");
     }

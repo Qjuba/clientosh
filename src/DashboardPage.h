@@ -89,6 +89,8 @@ private:
     void renameTagDialog(const QString& tagName);
     void deleteTag(const QString& tagName);
     void moveProfileToTag(const QString& profileId, const QString& tagName);
+    bool moveProfileToTagAt(const QString& profileId, const QString& tagName,
+                            const QString& beforeProfileId);
     void removeProfileFromTag(const QString& profileId);
     QStringList currentTags() const;
     void persistTagCollapseState();
@@ -204,6 +206,7 @@ private:
     QCheckBox* m_saveKeyPass = nullptr;
     QPushButton* m_browseKeyBtn = nullptr;
     QPushButton* m_saveProfileBtn = nullptr;
+    QPushButton* m_connectProfileBtn = nullptr;
 
     QListWidget* m_settingsNav = nullptr;
     QStackedWidget* m_settingsStack = nullptr;
@@ -251,6 +254,7 @@ private:
     QKeySequenceEdit* m_shortcutDashboard = nullptr;
     QKeySequenceEdit* m_shortcutClosePanel = nullptr;
     QKeySequenceEdit* m_shortcutOpenSftp = nullptr;
+    QKeySequenceEdit* m_shortcutClearTerminal = nullptr;
     QKeySequenceEdit* m_shortcutFontLarger = nullptr;
     QKeySequenceEdit* m_shortcutFontSmaller = nullptr;
     QKeySequenceEdit* m_shortcutFontReset = nullptr;
@@ -259,6 +263,7 @@ private:
     QCheckBox* m_enableDashboard = nullptr;
     QCheckBox* m_enableClosePanel = nullptr;
     QCheckBox* m_enableOpenSftp = nullptr;
+    QCheckBox* m_enableClearTerminal = nullptr;
     QCheckBox* m_enableFontLarger = nullptr;
     QCheckBox* m_enableFontSmaller = nullptr;
     QCheckBox* m_enableFontReset = nullptr;

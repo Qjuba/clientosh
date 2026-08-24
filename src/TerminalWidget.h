@@ -24,6 +24,7 @@ public:
     explicit TerminalWidget(QWidget* parent = nullptr);
 
     void setInteractive(bool enabled);
+    void setXmodemAvailable(bool enabled);
     void appendOutput(const QByteArray& data);
     void clearTerminal();
     void estimatePtySize(int* cols, int* rows) const;
@@ -41,6 +42,7 @@ signals:
     void inputReady(const QByteArray& data);
     void ptySizeChanged(int cols, int rows);
     void terminalFontSizeChanged(int points);
+    void xmodemSendRequested();
 
 protected:
     bool event(QEvent* event) override;
@@ -249,4 +251,6 @@ private:
     QPropertyAnimation* m_fontZoomFade = nullptr;
     QTimer* m_fontZoomHideTimer = nullptr;
     QMenu* m_contextMenu = nullptr;
+    QAction* m_xmodemAction = nullptr;
+    bool m_xmodemAvailable = false;
 };

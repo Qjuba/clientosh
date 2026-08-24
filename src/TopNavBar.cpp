@@ -16,6 +16,7 @@
 #include <QMenu>
 #include <QMetaObject>
 #include <QMimeData>
+#include <QResizeEvent>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QThread>
@@ -188,6 +189,7 @@ void TopNavBar::setWorkspaceActive(bool active)
 void TopNavBar::clearStatsDisplay()
 {
     m_statsHaveData = false;
+    m_statsText.clear();
     m_stats->clear();
     m_stats->setToolTip(QString());
     m_stats->setVisible(false);
@@ -196,6 +198,7 @@ void TopNavBar::clearStatsDisplay()
 void TopNavBar::hideStatsUntilData()
 {
     m_statsHaveData = false;
+    m_statsText.clear();
     m_stats->clear();
     m_stats->setToolTip(QString());
     m_stats->setVisible(false);
@@ -227,7 +230,7 @@ void TopNavBar::applyStats(const ServerStats& stats)
         disk = formatPercent(pct);
     }
 
-    m_stats->setText(QStringLiteral("cpu %1  ·  ram %2  ·  disk %3").arg(cpu, ram, disk));
+    m_statsText = QStringLiteral("cpu %1  ·  ram %2  ·  disk %3").arg(cpu, ram, disk);
 
     QString tip;
     if (stats.cpuPercent >= 0.0) {
@@ -243,7 +246,62 @@ void TopNavBar::applyStats(const ServerStats& stats)
     }
     m_stats->setToolTip(tip.trimmed());
     m_statsHaveData = true;
+    updateStatsPresentation();
     m_stats->setVisible(true);
+}
+
+void TopNavBar::updateStatsPresentation()
+{
+    if (!m_statsHaveData || !m_stats) {
+        return;
+    }
+
+    const bool compact = shouldCompactStats();
+    if (compact == m_statsCompact && ((!compact && m_stats->text() == m_statsText)
+                                      || (compact && !m_stats->pixmap(Qt::ReturnByValue).isNull()))) {
+        return;
+    }
+
+    m_statsCompact = compact;
+    if (compact) {
+        m_stats->setText(QString());
+        m_stats->setPixmap(QIcon(QStringLiteral(":/icons/server-stats.svg")).pixmap(QSize(15, 15)));
+    } else {
+        m_stats->setPixmap(QPixmap());
+        m_stats->setText(m_statsText);
+    }
+}
+
+bool TopNavBar::shouldCompactStats() const
+{
+    const auto* navLayout = qobject_cast<QHBoxLayout*>(layout());
+    if (!navLayout || m_statsText.isEmpty()) {
+        return false;
+    }
+
+    const QMargins margins = navLayout->contentsMargins();
+    int requiredWidth = margins.left() + margins.right();
+    for (int i = 0; i < navLayout->count(); ++i) {
+        const QLayoutItem* item = navLayout->itemAt(i);
+        if (!item) {
+            continue;
+        }
+        if (item->widget() == m_stats) {
+            // Keep this independent of the current text/icon mode. The stylesheet
+            // gives the label 8 px left + 4 px right padding.
+            requiredWidth += m_stats->fontMetrics().horizontalAdvance(m_statsText) + 12;
+        } else {
+            requiredWidth += item->sizeHint().width();
+        }
+    }
+    requiredWidth += qMax(0, navLayout->count() - 1) * navLayout->spacing();
+    return requiredWidth > width();
+}
+
+void TopNavBar::resizeEvent(QResizeEvent* event)
+{
+    QWidget::resizeEvent(event);
+    updateStatsPresentation();
 }
 
 void TopNavBar::syncStatsProbe()
@@ -362,6 +420,7 @@ void TopNavBar::rebuildTabs()
         m_tabsLay->addWidget(chip);
     }
     m_tabsLay->addStretch(1);
+    updateStatsPresentation();
 }
 
 void TopNavBar::showPanelContextMenu(const PanelRef& ref, const QPoint& globalPos)

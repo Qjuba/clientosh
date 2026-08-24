@@ -520,6 +520,12 @@ void TerminalWidget::setInteractive(bool enabled)
     update();
 }
 
+void TerminalWidget::setXmodemAvailable(bool enabled)
+{
+    m_xmodemAvailable = enabled;
+    if (m_xmodemAction) m_xmodemAction->setEnabled(enabled);
+}
+
 void TerminalWidget::clearTerminal()
 {
     resetTerminalState();
@@ -2036,6 +2042,12 @@ void TerminalWidget::showContextMenu(const QPoint& globalPos)
             }
             pasteClipboard();
         });
+
+        m_contextMenu->addSeparator();
+        m_xmodemAction = m_contextMenu->addAction(QStringLiteral("Send file via XMODEM…"));
+        m_xmodemAction->setEnabled(m_xmodemAvailable);
+        connect(m_xmodemAction, &QAction::triggered, this,
+                [this]() { emit xmodemSendRequested(); });
     }
     m_contextMenu->popup(globalPos);
 }

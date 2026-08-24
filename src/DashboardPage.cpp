@@ -29,6 +29,11 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
+#include <QDrag>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -38,6 +43,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QFrame>
@@ -69,8 +75,11 @@
 #include <QUrl>
 #include <QVBoxLayout>
 
+#include <functional>
+
 namespace {
 constexpr int kHostFolderStateRole = Qt::UserRole + 2;
+constexpr auto kHostProfileMimeType = "application/x-clientosh-host-profile";
 
 QString hostTagFolderKey(const QString& tagName)
 {
@@ -82,6 +91,314 @@ QString hostLiveFolderKey()
 {
     return QStringLiteral("folder:current-sessions");
 }
+
+class HostTreeWidget final : public QTreeWidget
+{
+    struct DropLocation {
+        QTreeWidgetItem* folder = nullptr;
+        QTreeWidgetItem* anchor = nullptr;
+        bool before = false;
+        QString beforeProfileId;
+    };
+
+public:
+    using ProfileDropHandler =
+        std::function<void(const QString&, const QString&, const QString&)>;
+
+    explicit HostTreeWidget(QWidget* parent = nullptr)
+        : QTreeWidget(parent)
+    {
+        setAcceptDrops(true);
+        setDragEnabled(false);
+        setDropIndicatorShown(false);
+        viewport()->setMouseTracking(true);
+    }
+
+    void setProfileDropHandler(ProfileDropHandler handler)
+    {
+        m_profileDropHandler = std::move(handler);
+    }
+
+protected:
+    void mousePressEvent(QMouseEvent* event) override
+    {
+        QTreeWidget::mousePressEvent(event);
+        m_dragProfileId.clear();
+        if (event->button() != Qt::LeftButton) {
+            return;
+        }
+
+        QTreeWidgetItem* item = itemAt(event->position().toPoint());
+        if (!isSavedHost(item)) {
+            return;
+        }
+        m_dragStartPosition = event->position().toPoint();
+        m_dragProfileId = item->data(0, Qt::UserRole).toString();
+        const QRect rowRect = visualItemRect(item);
+        m_dragHotSpot = QPoint(m_dragStartPosition.x(), m_dragStartPosition.y() - rowRect.top());
+    }
+
+    void mouseMoveEvent(QMouseEvent* event) override
+    {
+        if (event->buttons() == Qt::NoButton) {
+            QTreeWidget::mouseMoveEvent(event);
+            return;
+        }
+
+        if (!(event->buttons() & Qt::LeftButton) || m_dragProfileId.isEmpty()
+            || (event->position().toPoint() - m_dragStartPosition).manhattanLength()
+                < QApplication::startDragDistance()) {
+            QTreeWidget::mouseMoveEvent(event);
+            return;
+        }
+
+        QTreeWidgetItem* item = findSavedHost(m_dragProfileId);
+        if (!item) {
+            m_dragProfileId.clear();
+            return;
+        }
+
+        QRect rowRect = visualItemRect(item);
+        rowRect.setLeft(0);
+        rowRect.setRight(viewport()->width() - 1);
+        const QPixmap sourcePixmap = viewport()->grab(rowRect);
+        QPixmap dragPixmap(sourcePixmap.size());
+        dragPixmap.fill(Qt::transparent);
+        {
+            QPainter painter(&dragPixmap);
+            painter.setOpacity(0.68);
+            painter.drawPixmap(0, 0, sourcePixmap);
+        }
+
+        QDrag drag(this);
+        auto* mimeData = new QMimeData;
+        mimeData->setData(kHostProfileMimeType, m_dragProfileId.toUtf8());
+        drag.setMimeData(mimeData);
+        drag.setPixmap(dragPixmap);
+        drag.setHotSpot(QPoint(qBound(0, m_dragHotSpot.x(), dragPixmap.width() - 1),
+                               qBound(0, m_dragHotSpot.y(), dragPixmap.height() - 1)));
+
+        viewport()->setCursor(Qt::ClosedHandCursor);
+        drag.exec(Qt::MoveAction);
+        viewport()->unsetCursor();
+        m_dragProfileId.clear();
+        clearDropTarget();
+    }
+
+    void mouseReleaseEvent(QMouseEvent* event) override
+    {
+        m_dragProfileId.clear();
+        QTreeWidget::mouseReleaseEvent(event);
+    }
+
+    void dragEnterEvent(QDragEnterEvent* event) override
+    {
+        if (event->source() == this && event->mimeData()->hasFormat(kHostProfileMimeType)) {
+            event->setDropAction(Qt::MoveAction);
+            event->accept();
+            return;
+        }
+        event->ignore();
+    }
+
+    void dragMoveEvent(QDragMoveEvent* event) override
+    {
+        const QString profileId = QString::fromUtf8(
+            event->mimeData()->data(kHostProfileMimeType));
+        const DropLocation location = dropLocationAt(event->position().toPoint(), profileId);
+        if (!location.folder || profileId.isEmpty() || !wouldChangeOrder(profileId, location)) {
+            clearDropTarget();
+            event->ignore();
+            return;
+        }
+
+        setDropTarget(location);
+        event->setDropAction(Qt::MoveAction);
+        event->accept();
+    }
+
+    void dragLeaveEvent(QDragLeaveEvent* event) override
+    {
+        clearDropTarget();
+        event->accept();
+    }
+
+    void dropEvent(QDropEvent* event) override
+    {
+        const QString profileId = QString::fromUtf8(
+            event->mimeData()->data(kHostProfileMimeType));
+        const DropLocation location = dropLocationAt(event->position().toPoint(), profileId);
+        if (!location.folder || profileId.isEmpty() || !wouldChangeOrder(profileId, location)) {
+            clearDropTarget();
+            event->ignore();
+            return;
+        }
+
+        const QString targetTag = location.folder->data(0, Qt::UserRole).toString();
+        const QString beforeProfileId = location.beforeProfileId;
+        clearDropTarget();
+        event->setDropAction(Qt::MoveAction);
+        event->accept();
+        if (m_profileDropHandler) {
+            m_profileDropHandler(profileId, targetTag, beforeProfileId);
+        }
+    }
+
+    void paintEvent(QPaintEvent* event) override
+    {
+        QTreeWidget::paintEvent(event);
+        if (!m_dropFolder) {
+            return;
+        }
+        QColor outline = palette().color(QPalette::Highlight);
+        outline.setAlpha(210);
+
+        QPainter painter(viewport());
+        if (m_dropAnchor) {
+            const QRect anchorRect = visualItemRect(m_dropAnchor);
+            const int y = m_dropBefore ? anchorRect.top() : anchorRect.bottom();
+            painter.setPen(QPen(outline, 2));
+            painter.drawLine(1, y, viewport()->width() - 2, y);
+        } else {
+            QRect targetRect = visualItemRect(m_dropFolder);
+            targetRect.setLeft(1);
+            targetRect.setRight(viewport()->width() - 2);
+            targetRect.adjust(0, 1, 0, -1);
+            QColor fill = palette().color(QPalette::Highlight);
+            fill.setAlpha(44);
+            painter.fillRect(targetRect, fill);
+            painter.setPen(QPen(outline, 1));
+            painter.drawRect(targetRect.adjusted(0, 0, -1, -1));
+        }
+    }
+
+private:
+    static bool isSavedHost(const QTreeWidgetItem* item)
+    {
+        return item && item->parent()
+            && item->data(0, Qt::UserRole + 1).toString() != QLatin1String("live")
+            && !item->data(0, Qt::UserRole).toString().isEmpty();
+    }
+
+    QTreeWidgetItem* findSavedHost(const QString& profileId) const
+    {
+        for (int i = 0; i < topLevelItemCount(); ++i) {
+            QTreeWidgetItem* folder = topLevelItem(i);
+            for (int c = 0; c < folder->childCount(); ++c) {
+                QTreeWidgetItem* child = folder->child(c);
+                if (isSavedHost(child)
+                    && child->data(0, Qt::UserRole).toString() == profileId) {
+                    return child;
+                }
+            }
+        }
+        return nullptr;
+    }
+
+    DropLocation dropLocationAt(const QPoint& position, const QString& profileId) const
+    {
+        QTreeWidgetItem* item = itemAt(position);
+        if (!item) {
+            return {};
+        }
+
+        QTreeWidgetItem* folder = item->parent() ? item->parent() : item;
+        if (folder->data(0, Qt::UserRole + 1).toString() == QLatin1String("live-header")
+            || folder->data(0, kHostFolderStateRole).toString().isEmpty()) {
+            return {};
+        }
+
+        DropLocation location;
+        location.folder = folder;
+        if (!item->parent()) {
+            return location; // dropping on a folder header appends to that folder
+        }
+        if (!isSavedHost(item)) {
+            return {};
+        }
+
+        location.anchor = item;
+        const QRect anchorRect = visualItemRect(item);
+        location.before = position.y() < anchorRect.center().y();
+        if (location.before) {
+            location.beforeProfileId = item->data(0, Qt::UserRole).toString();
+        } else {
+            const int anchorIndex = folder->indexOfChild(item);
+            for (int i = anchorIndex + 1; i < folder->childCount(); ++i) {
+                QTreeWidgetItem* next = folder->child(i);
+                const QString nextId = next->data(0, Qt::UserRole).toString();
+                if (isSavedHost(next) && nextId != profileId) {
+                    location.beforeProfileId = nextId;
+                    break;
+                }
+            }
+        }
+        return location;
+    }
+
+    QString currentTagForProfile(const QString& profileId) const
+    {
+        if (QTreeWidgetItem* item = findSavedHost(profileId)) {
+            return item->parent()->data(0, Qt::UserRole).toString();
+        }
+        return {};
+    }
+
+    bool wouldChangeOrder(const QString& profileId, const DropLocation& location) const
+    {
+        const QString sourceTag = currentTagForProfile(profileId);
+        const QString targetTag = location.folder->data(0, Qt::UserRole).toString();
+        if (sourceTag != targetTag) {
+            return true;
+        }
+
+        QStringList currentOrder;
+        for (int i = 0; i < location.folder->childCount(); ++i) {
+            QTreeWidgetItem* child = location.folder->child(i);
+            if (isSavedHost(child)) {
+                currentOrder.append(child->data(0, Qt::UserRole).toString());
+            }
+        }
+        QStringList reordered = currentOrder;
+        reordered.removeAll(profileId);
+        const int beforeIndex = location.beforeProfileId.isEmpty()
+            ? reordered.size()
+            : reordered.indexOf(location.beforeProfileId);
+        if (beforeIndex < 0) {
+            return false;
+        }
+        reordered.insert(beforeIndex, profileId);
+        return reordered != currentOrder;
+    }
+
+    void setDropTarget(const DropLocation& location)
+    {
+        if (m_dropFolder == location.folder && m_dropAnchor == location.anchor
+            && m_dropBefore == location.before) {
+            return;
+        }
+        m_dropFolder = location.folder;
+        m_dropAnchor = location.anchor;
+        m_dropBefore = location.before;
+        viewport()->update();
+    }
+
+    void clearDropTarget()
+    {
+        m_dropFolder = nullptr;
+        m_dropAnchor = nullptr;
+        m_dropBefore = false;
+        viewport()->update();
+    }
+
+    QPoint m_dragStartPosition;
+    QPoint m_dragHotSpot;
+    QString m_dragProfileId;
+    QTreeWidgetItem* m_dropFolder = nullptr;
+    QTreeWidgetItem* m_dropAnchor = nullptr;
+    bool m_dropBefore = false;
+    ProfileDropHandler m_profileDropHandler;
+};
 
 int detectPrivateKeyPassphrase(const char* /*prompt*/, char* /*buf*/, size_t /*len*/,
                                int /*echo*/, int /*verify*/, void* userdata)
@@ -321,7 +638,8 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     hostsLay->setContentsMargins(16, 12, 16, 10);
     hostsLay->setSpacing(8);
 
-    m_savedTree = new QTreeWidget(m_hostsPage);
+    auto* hostTree = new HostTreeWidget(m_hostsPage);
+    m_savedTree = hostTree;
     m_savedTree->setObjectName(QStringLiteral("dashTable"));
     m_savedTree->setColumnCount(5);
     m_savedTree->setHeaderLabels({QStringLiteral("name"), QStringLiteral("type"), QStringLiteral("auth"),
@@ -343,6 +661,33 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_savedTree->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_savedTree->setFocusPolicy(Qt::NoFocus);
     m_savedTree->setContextMenuPolicy(Qt::CustomContextMenu);
+    hostTree->setProfileDropHandler([this](const QString& profileId, const QString& tagName,
+                                           const QString& beforeProfileId) {
+        const int profileIndex = profileIndexById(profileId);
+        if (profileIndex < 0) {
+            return;
+        }
+
+        const QString profileTitle = m_profiles[profileIndex].displayTitle();
+        const QString targetLabel = tagName.isEmpty() ? QStringLiteral("Untagged") : tagName;
+
+        if (!moveProfileToTagAt(profileId, tagName, beforeProfileId)) {
+            m_hint->setText(QStringLiteral("could not move %1").arg(profileTitle));
+            return;
+        }
+
+        // Expand the destination so the successful move confirms itself visually.
+        for (int i = 0; i < m_savedTree->topLevelItemCount(); ++i) {
+            QTreeWidgetItem* folder = m_savedTree->topLevelItem(i);
+            if (folder->data(0, Qt::UserRole + 1).toString() != QLatin1String("live-header")
+                && folder->data(0, Qt::UserRole).toString() == tagName) {
+                folder->setExpanded(true);
+                break;
+            }
+        }
+        m_hint->setText(QStringLiteral("moved %1 to %2").arg(profileTitle, targetLabel));
+        appendLog(QStringLiteral("moved host %1 to %2").arg(profileTitle, targetLabel));
+    });
     connect(m_savedTree, &QTreeWidget::customContextMenuRequested, this,
             [this](const QPoint& pos) {
                 auto* item = m_savedTree->itemAt(pos);
@@ -911,6 +1256,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         m_shortcutDashboard = new QKeySequenceEdit(sec);
         m_shortcutClosePanel = new QKeySequenceEdit(sec);
         m_shortcutOpenSftp = new QKeySequenceEdit(sec);
+        m_shortcutClearTerminal = new QKeySequenceEdit(sec);
         m_shortcutFontLarger = new QKeySequenceEdit(sec);
         m_shortcutFontSmaller = new QKeySequenceEdit(sec);
         m_shortcutFontReset = new QKeySequenceEdit(sec);
@@ -920,6 +1266,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         m_enableDashboard = new QCheckBox(sec);
         m_enableClosePanel = new QCheckBox(sec);
         m_enableOpenSftp = new QCheckBox(sec);
+        m_enableClearTerminal = new QCheckBox(sec);
         m_enableFontLarger = new QCheckBox(sec);
         m_enableFontSmaller = new QCheckBox(sec);
         m_enableFontReset = new QCheckBox(sec);
@@ -958,6 +1305,8 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         addShortcutRow(QStringLiteral("Show dashboard"), m_shortcutDashboard, m_enableDashboard);
         addShortcutRow(QStringLiteral("Close active panel"), m_shortcutClosePanel, m_enableClosePanel);
         addShortcutRow(QStringLiteral("Open SFTP"), m_shortcutOpenSftp, m_enableOpenSftp);
+        addShortcutRow(QStringLiteral("Clear active terminal"), m_shortcutClearTerminal,
+                       m_enableClearTerminal);
         addShortcutRow(QStringLiteral("Terminal font larger"), m_shortcutFontLarger, m_enableFontLarger);
         addShortcutRow(QStringLiteral("Terminal font smaller"), m_shortcutFontSmaller, m_enableFontSmaller);
         addShortcutRow(QStringLiteral("Terminal font reset"), m_shortcutFontReset, m_enableFontReset);
@@ -988,6 +1337,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         wireEdit(m_shortcutDashboard);
         wireEdit(m_shortcutClosePanel);
         wireEdit(m_shortcutOpenSftp);
+        wireEdit(m_shortcutClearTerminal);
         wireEdit(m_shortcutFontLarger);
         wireEdit(m_shortcutFontSmaller);
         wireEdit(m_shortcutFontReset);
@@ -1339,6 +1689,8 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_portSpin->setRange(1, 65535);
     m_portSpin->setValue(AppSettings::defaultPort());
     m_portSpin->setMinimumWidth(90);
+    m_portSpin->setButtonSymbols(QAbstractSpinBox::NoButtons);
+    m_portSpin->setFixedHeight(m_hostEdit->sizeHint().height());
     m_userEdit = new QLineEdit(formInner);
     m_userEdit->setPlaceholderText(QStringLiteral("username"));
     m_userEdit->setText(AppSettings::defaultUser());
@@ -1547,6 +1899,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     auto* connectBtn = new QPushButton(QIcon(QStringLiteral(":/icons/connect.svg")),
                                        QStringLiteral("Connect"), formFooter);
     m_saveProfileBtn = saveBtn;
+    m_connectProfileBtn = connectBtn;
     backBtn->setObjectName(QStringLiteral("dashButton"));
     saveBtn->setObjectName(QStringLiteral("dashButton"));
     connectBtn->setObjectName(QStringLiteral("dashPrimary"));
@@ -1585,6 +1938,11 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     connect(m_keyringCombo, &QComboBox::currentIndexChanged, this, &DashboardPage::onKeyringSelectionChanged);
     connect(m_authMethodCombo, &QComboBox::currentIndexChanged, this, [this](int) {
         updateAuthMethodUi();
+        const auto mode = static_cast<ConnectionMode>(m_connectionModeCombo->currentData().toInt());
+        if (m_editingId.isEmpty()
+            && (mode == ConnectionMode::Ssh || mode == ConnectionMode::SftpOnly)) {
+            AppSettings::setLastAuthMethod(m_authMethodCombo->currentData().toInt());
+        }
     });
     connect(m_connectionModeCombo, &QComboBox::currentIndexChanged, this, [this](int) {
         updateConnectionModeUi();
@@ -1599,9 +1957,16 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     connect(m_settingsSavePassDefault, &QCheckBox::toggled, this, &DashboardPage::persistPrefsLive);
     connect(m_settingsDefaultHost, &QLineEdit::editingFinished, this, &DashboardPage::persistPrefsLive);
     connect(m_settingsDefaultUser, &QLineEdit::editingFinished, this, &DashboardPage::persistPrefsLive);
-    connect(m_settingsShowStats, &QCheckBox::toggled, this, &DashboardPage::persistPrefsLive);
+    connect(m_settingsShowStats, &QCheckBox::toggled, this, [this](bool visible) {
+        m_settingsStatsInterval->setEnabled(visible);
+        persistPrefsLive();
+        emit settingsApplied();
+    });
     connect(m_settingsStatsInterval, qOverload<int>(&QSpinBox::valueChanged), this,
-            [this](int) { persistPrefsLive(); });
+            [this](int) {
+                persistPrefsLive();
+                emit settingsApplied();
+            });
     connect(m_settingsDefaultPort, qOverload<int>(&QSpinBox::valueChanged), this,
             [this](int) { persistPrefsLive(); });
     connect(m_settingsHideDotfiles, &QCheckBox::toggled, this, &DashboardPage::persistPrefsLive);
@@ -2120,6 +2485,8 @@ void DashboardPage::persistShortcutsLive()
                m_shortcutClosePanel->keySequence().toString(QKeySequence::PortableText));
     s.setValue(QLatin1String(AppSettings::kShortcutOpenSftp),
                m_shortcutOpenSftp->keySequence().toString(QKeySequence::PortableText));
+    s.setValue(QLatin1String(AppSettings::kShortcutClearTerminal),
+               m_shortcutClearTerminal->keySequence().toString(QKeySequence::PortableText));
     s.setValue(QLatin1String(AppSettings::kShortcutFontLarger),
                m_shortcutFontLarger->keySequence().toString(QKeySequence::PortableText));
     s.setValue(QLatin1String(AppSettings::kShortcutFontSmaller),
@@ -2131,6 +2498,8 @@ void DashboardPage::persistShortcutsLive()
     s.setValue(QLatin1String(AppSettings::kShortcutDashboardEnabled), m_enableDashboard->isChecked());
     s.setValue(QLatin1String(AppSettings::kShortcutClosePanelEnabled), m_enableClosePanel->isChecked());
     s.setValue(QLatin1String(AppSettings::kShortcutOpenSftpEnabled), m_enableOpenSftp->isChecked());
+    s.setValue(QLatin1String(AppSettings::kShortcutClearTerminalEnabled),
+               m_enableClearTerminal->isChecked());
     s.setValue(QLatin1String(AppSettings::kShortcutFontLargerEnabled), m_enableFontLarger->isChecked());
     s.setValue(QLatin1String(AppSettings::kShortcutFontSmallerEnabled), m_enableFontSmaller->isChecked());
     s.setValue(QLatin1String(AppSettings::kShortcutFontResetEnabled), m_enableFontReset->isChecked());
@@ -2142,7 +2511,8 @@ void DashboardPage::resetShortcutsToDefaults()
 {
     const QList<QKeySequenceEdit*> edits = {
         m_shortcutNewSession, m_shortcutSettings, m_shortcutDashboard, m_shortcutClosePanel,
-        m_shortcutOpenSftp,   m_shortcutFontLarger, m_shortcutFontSmaller, m_shortcutFontReset};
+        m_shortcutOpenSftp,   m_shortcutClearTerminal, m_shortcutFontLarger,
+        m_shortcutFontSmaller, m_shortcutFontReset};
     for (QKeySequenceEdit* e : edits) {
         if (e) {
             e->blockSignals(true);
@@ -2152,7 +2522,8 @@ void DashboardPage::resetShortcutsToDefaults()
     m_settingsCtrlScrollZoom->setChecked(true);
     const QList<QCheckBox*> enables = {
         m_enableNewSession, m_enableSettings, m_enableDashboard, m_enableClosePanel,
-        m_enableOpenSftp,   m_enableFontLarger, m_enableFontSmaller, m_enableFontReset};
+        m_enableOpenSftp,   m_enableClearTerminal, m_enableFontLarger,
+        m_enableFontSmaller, m_enableFontReset};
     for (QCheckBox* c : enables) {
         if (c) {
             c->blockSignals(true);
@@ -2164,6 +2535,7 @@ void DashboardPage::resetShortcutsToDefaults()
     m_shortcutDashboard->setKeySequence(QKeySequence(QStringLiteral("Ctrl+Shift+D")));
     m_shortcutClosePanel->setKeySequence(QKeySequence(QStringLiteral("Ctrl+W")));
     m_shortcutOpenSftp->setKeySequence(QKeySequence(QStringLiteral("Ctrl+Shift+S")));
+    m_shortcutClearTerminal->setKeySequence(QKeySequence(QStringLiteral("Ctrl+Shift+K")));
     m_shortcutFontLarger->setKeySequence(QKeySequence(QStringLiteral("Ctrl+=")));
     m_shortcutFontSmaller->setKeySequence(QKeySequence(QStringLiteral("Ctrl+-")));
     m_shortcutFontReset->setKeySequence(QKeySequence(QStringLiteral("Ctrl+0")));
@@ -2292,6 +2664,10 @@ void DashboardPage::showNewSessionForm()
         m_formSub->setText(QStringLiteral("Connection details for a saved host"));
     }
     m_saveProfileBtn->setText(QStringLiteral("Save"));
+    m_saveProfileBtn->setObjectName(QStringLiteral("dashButton"));
+    m_saveProfileBtn->style()->unpolish(m_saveProfileBtn);
+    m_saveProfileBtn->style()->polish(m_saveProfileBtn);
+    m_connectProfileBtn->show();
     m_savePass->setChecked(AppSettings::savePasswordDefault());
     setNavPage(NavPage::Form);
     m_hostEdit->setFocus();
@@ -2311,6 +2687,10 @@ void DashboardPage::showEditSessionForm(const QString& profileId)
         m_formSub->setText(QStringLiteral("Update connection details"));
     }
     m_saveProfileBtn->setText(QStringLiteral("Save"));
+    m_saveProfileBtn->setObjectName(QStringLiteral("dashPrimary"));
+    m_saveProfileBtn->style()->unpolish(m_saveProfileBtn);
+    m_saveProfileBtn->style()->polish(m_saveProfileBtn);
+    m_connectProfileBtn->hide();
     setNavPage(NavPage::Form);
     m_nameEdit->setFocus();
 }
@@ -2338,7 +2718,8 @@ void DashboardPage::clearForm()
     m_keyPassEdit->clear();
     m_saveKeyPass->setChecked(false);
     if (m_authMethodCombo) {
-        m_authMethodCombo->setCurrentIndex(0);
+        const int authIdx = m_authMethodCombo->findData(AppSettings::lastAuthMethod());
+        m_authMethodCombo->setCurrentIndex(authIdx >= 0 ? authIdx : 0);
     }
     updateConnectionModeUi();
 }
@@ -3220,6 +3601,7 @@ void DashboardPage::rebuildSavedList()
             child->setText(0, p.displayTitle());
             child->setData(0, Qt::UserRole, p.id);
             child->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+            child->setToolTip(0, QStringLiteral("Drag to reorder or move this host to another tag"));
 
             child->setText(1, p.connectionTypeLabel());
 
@@ -3444,6 +3826,75 @@ void DashboardPage::moveProfileToTag(const QString& profileId, const QString& ta
     }
     AppSettings::setTagAssignments(m_tagAssignments);
     rebuildSavedList();
+}
+
+bool DashboardPage::moveProfileToTagAt(const QString& profileId, const QString& tagName,
+                                       const QString& beforeProfileId)
+{
+    const int sourceIndex = profileIndexById(profileId);
+    if (sourceIndex < 0 || (!tagName.isEmpty() && !m_tags.contains(tagName))
+        || profileId == beforeProfileId) {
+        return false;
+    }
+
+    const QVector<SessionProfile> previousProfiles = m_profiles;
+    const QHash<QString, QStringList> previousAssignments = m_tagAssignments;
+
+    for (auto it = m_tagAssignments.begin(); it != m_tagAssignments.end(); ++it) {
+        it.value().removeAll(profileId);
+    }
+    if (!tagName.isEmpty()) {
+        QStringList& targetIds = m_tagAssignments[tagName];
+        if (!targetIds.contains(profileId)) {
+            targetIds.append(profileId);
+        }
+    }
+
+    const auto tagForProfile = [this](const QString& id) {
+        for (const QString& tag : m_tags) {
+            if (m_tagAssignments.value(tag).contains(id)) {
+                return tag;
+            }
+        }
+        return QString();
+    };
+
+    const SessionProfile movedProfile = m_profiles.takeAt(sourceIndex);
+    int insertionIndex = m_profiles.size();
+    if (!beforeProfileId.isEmpty()) {
+        insertionIndex = profileIndexById(beforeProfileId);
+        if (insertionIndex < 0 || tagForProfile(beforeProfileId) != tagName) {
+            m_profiles = previousProfiles;
+            m_tagAssignments = previousAssignments;
+            return false;
+        }
+    } else {
+        int lastTargetIndex = -1;
+        for (int i = 0; i < m_profiles.size(); ++i) {
+            if (tagForProfile(m_profiles[i].id) == tagName) {
+                lastTargetIndex = i;
+            }
+        }
+        insertionIndex = lastTargetIndex + 1;
+        if (lastTargetIndex < 0) {
+            insertionIndex = m_profiles.size();
+        }
+    }
+    m_profiles.insert(insertionIndex, movedProfile);
+
+    if (!saveProfiles(m_profiles)) {
+        m_profiles = previousProfiles;
+        m_tagAssignments = previousAssignments;
+        return false;
+    }
+
+    AppSettings::setTagAssignments(m_tagAssignments);
+    if (m_syncSaveDebounce && m_sync && m_sync->state() == SyncController::State::Active
+        && !m_sync->isPaused()) {
+        m_syncSaveDebounce->start();
+    }
+    rebuildSavedList();
+    return true;
 }
 
 void DashboardPage::removeProfileFromTag(const QString& profileId)
@@ -3909,6 +4360,7 @@ void DashboardPage::loadSettingsUi()
         const QSignalBlocker b5(m_settingsSftpView);
         m_settingsShowStats->setChecked(AppSettings::showServerStats());
         m_settingsStatsInterval->setValue(AppSettings::statsIntervalSec());
+        m_settingsStatsInterval->setEnabled(m_settingsShowStats->isChecked());
         m_settingsDefaultPort->setValue(AppSettings::defaultPort());
         m_settingsHideDotfiles->setChecked(AppSettings::hideDotfiles());
         const int viewIdx = m_settingsSftpView->findData(AppSettings::sftpDefaultView());
@@ -3922,7 +4374,8 @@ void DashboardPage::loadSettingsUi()
 
     const QList<QKeySequenceEdit*> shortcutEdits = {
         m_shortcutNewSession, m_shortcutSettings, m_shortcutDashboard, m_shortcutClosePanel,
-        m_shortcutOpenSftp,   m_shortcutFontLarger, m_shortcutFontSmaller, m_shortcutFontReset};
+        m_shortcutOpenSftp,   m_shortcutClearTerminal, m_shortcutFontLarger,
+        m_shortcutFontSmaller, m_shortcutFontReset};
     for (QKeySequenceEdit* e : shortcutEdits) {
         if (e) {
             e->blockSignals(true);
@@ -3948,11 +4401,13 @@ void DashboardPage::loadSettingsUi()
     // Hydrate enable toggles independently of the key fields.
     const QList<QCheckBox*> shortcutEnables = {
         m_enableNewSession, m_enableSettings, m_enableDashboard, m_enableClosePanel,
-        m_enableOpenSftp,   m_enableFontLarger, m_enableFontSmaller, m_enableFontReset};
+        m_enableOpenSftp,   m_enableClearTerminal, m_enableFontLarger,
+        m_enableFontSmaller, m_enableFontReset};
     const QList<const char*> shortcutEnableKeys = {
         AppSettings::kShortcutNewSessionEnabled, AppSettings::kShortcutSettingsEnabled,
         AppSettings::kShortcutDashboardEnabled,  AppSettings::kShortcutClosePanelEnabled,
-        AppSettings::kShortcutOpenSftpEnabled,    AppSettings::kShortcutFontLargerEnabled,
+        AppSettings::kShortcutOpenSftpEnabled,    AppSettings::kShortcutClearTerminalEnabled,
+        AppSettings::kShortcutFontLargerEnabled,
         AppSettings::kShortcutFontSmallerEnabled, AppSettings::kShortcutFontResetEnabled};
     for (int i = 0; i < shortcutEnables.size(); ++i) {
         QCheckBox* c = shortcutEnables[i];
@@ -3989,6 +4444,9 @@ void DashboardPage::loadSettingsUi()
     m_shortcutOpenSftp->setKeySequence(
         AppSettings::shortcutFromSetting(AppSettings::kShortcutOpenSftp,
                                          QKeySequence(QStringLiteral("Ctrl+Shift+S"))));
+    m_shortcutClearTerminal->setKeySequence(
+        AppSettings::shortcutFromSetting(AppSettings::kShortcutClearTerminal,
+                                         QKeySequence(QStringLiteral("Ctrl+Shift+K"))));
     m_shortcutFontLarger->setKeySequence(
         AppSettings::shortcutFromSetting(AppSettings::kShortcutFontLarger,
                                          QKeySequence(QStringLiteral("Ctrl+="))));
@@ -4076,6 +4534,8 @@ void DashboardPage::saveSettingsUi()
                    m_shortcutClosePanel->keySequence().toString(QKeySequence::PortableText));
         s.setValue(QLatin1String(AppSettings::kShortcutOpenSftp),
                    m_shortcutOpenSftp->keySequence().toString(QKeySequence::PortableText));
+        s.setValue(QLatin1String(AppSettings::kShortcutClearTerminal),
+                   m_shortcutClearTerminal->keySequence().toString(QKeySequence::PortableText));
         s.setValue(QLatin1String(AppSettings::kShortcutFontLarger),
                    m_shortcutFontLarger->keySequence().toString(QKeySequence::PortableText));
         s.setValue(QLatin1String(AppSettings::kShortcutFontSmaller),
@@ -4087,6 +4547,8 @@ void DashboardPage::saveSettingsUi()
         s.setValue(QLatin1String(AppSettings::kShortcutDashboardEnabled), m_enableDashboard->isChecked());
         s.setValue(QLatin1String(AppSettings::kShortcutClosePanelEnabled), m_enableClosePanel->isChecked());
         s.setValue(QLatin1String(AppSettings::kShortcutOpenSftpEnabled), m_enableOpenSftp->isChecked());
+        s.setValue(QLatin1String(AppSettings::kShortcutClearTerminalEnabled),
+                   m_enableClearTerminal->isChecked());
         s.setValue(QLatin1String(AppSettings::kShortcutFontLargerEnabled), m_enableFontLarger->isChecked());
         s.setValue(QLatin1String(AppSettings::kShortcutFontSmallerEnabled), m_enableFontSmaller->isChecked());
         s.setValue(QLatin1String(AppSettings::kShortcutFontResetEnabled), m_enableFontReset->isChecked());

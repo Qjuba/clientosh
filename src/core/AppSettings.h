@@ -119,6 +119,7 @@ inline constexpr const char* kTerminalBgBlur = "settings/terminalBgBlur";
 inline constexpr const char* kDefaultHost = "settings/defaultHost";
 inline constexpr const char* kDefaultUser = "settings/defaultUser";
 inline constexpr const char* kDefaultPort = "settings/defaultPort";
+inline constexpr const char* kLastAuthMethod = "settings/lastAuthMethod";
 inline constexpr const char* kStatsIntervalSec = "settings/statsIntervalSec";
 inline constexpr const char* kShowServerStats = "settings/showServerStats";
 inline constexpr const char* kSftpDefaultView = "settings/sftpDefaultView";
@@ -134,6 +135,7 @@ inline constexpr const char* kShortcutSettings = "settings/shortcutSettings";
 inline constexpr const char* kShortcutDashboard = "settings/shortcutDashboard";
 inline constexpr const char* kShortcutClosePanel = "settings/shortcutClosePanel";
 inline constexpr const char* kShortcutOpenSftp = "settings/shortcutOpenSftp";
+inline constexpr const char* kShortcutClearTerminal = "settings/shortcutClearTerminal";
 inline constexpr const char* kShortcutFontLarger = "settings/shortcutFontLarger";
 inline constexpr const char* kShortcutFontSmaller = "settings/shortcutFontSmaller";
 inline constexpr const char* kShortcutFontReset = "settings/shortcutFontReset";
@@ -142,6 +144,7 @@ inline constexpr const char* kShortcutSettingsEnabled = "settings/shortcutSettin
 inline constexpr const char* kShortcutDashboardEnabled = "settings/shortcutDashboardEnabled";
 inline constexpr const char* kShortcutClosePanelEnabled = "settings/shortcutClosePanelEnabled";
 inline constexpr const char* kShortcutOpenSftpEnabled = "settings/shortcutOpenSftpEnabled";
+inline constexpr const char* kShortcutClearTerminalEnabled = "settings/shortcutClearTerminalEnabled";
 inline constexpr const char* kShortcutFontLargerEnabled = "settings/shortcutFontLargerEnabled";
 inline constexpr const char* kShortcutFontSmallerEnabled = "settings/shortcutFontSmallerEnabled";
 inline constexpr const char* kShortcutFontResetEnabled = "settings/shortcutFontResetEnabled";
@@ -298,6 +301,18 @@ inline QString defaultUser()
 inline int defaultPort()
 {
     return qBound(1, QSettings().value(QLatin1String(kDefaultPort), 22).toInt(), 65535);
+}
+
+/** AuthMethod value last selected while creating an SSH/SFTP session. */
+inline int lastAuthMethod()
+{
+    const int method = QSettings().value(QLatin1String(kLastAuthMethod), 0).toInt();
+    return (method >= 0 && method <= 3) ? method : 0;
+}
+
+inline void setLastAuthMethod(int method)
+{
+    setValueSync(kLastAuthMethod, (method >= 0 && method <= 3) ? method : 0);
 }
 
 inline int statsIntervalSec()
@@ -471,6 +486,15 @@ inline QKeySequence shortcutOpenSftp()
         return {};
     }
     return shortcutFromSetting(kShortcutOpenSftp, QKeySequence(QStringLiteral("Ctrl+Shift+S")));
+}
+
+inline QKeySequence shortcutClearTerminal()
+{
+    if (!shortcutEnabled(kShortcutClearTerminalEnabled)) {
+        return {};
+    }
+    return shortcutFromSetting(kShortcutClearTerminal,
+                               QKeySequence(QStringLiteral("Ctrl+Shift+K")));
 }
 
 inline QKeySequence shortcutFontLarger()

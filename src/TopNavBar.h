@@ -13,6 +13,7 @@ class QHBoxLayout;
 class QLabel;
 class QToolButton;
 class QThread;
+class QResizeEvent;
 
 class TopNavBar : public QWidget
 {
@@ -40,6 +41,7 @@ signals:
     void alwaysOnTopToggled(bool on);
 
 protected:
+    void resizeEvent(QResizeEvent* event) override;
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dragMoveEvent(QDragMoveEvent* event) override;
     void dropEvent(QDropEvent* event) override;
@@ -48,6 +50,8 @@ private:
     void rebuildTabs();
     void syncStatsProbe();
     void applyStats(const ServerStats& stats);
+    void updateStatsPresentation();
+    bool shouldCompactStats() const;
     void clearStatsDisplay();
     void hideStatsUntilData();
     void showPanelContextMenu(const PanelRef& ref, const QPoint& globalPos);
@@ -61,7 +65,9 @@ private:
     QToolButton* m_pinBtn = nullptr;
     QToolButton* m_sftpBtn = nullptr;
     QLabel* m_stats = nullptr;
+    QString m_statsText;
     bool m_statsHaveData = false;
+    bool m_statsCompact = false;
     bool m_workspaceActive = false;
 
     QThread* m_statsThread = nullptr;

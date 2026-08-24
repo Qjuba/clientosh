@@ -131,6 +131,8 @@ add_executable(clientosh
     src/core/TelnetSession.cpp
     src/core/SerialSession.h
     src/core/SerialSession.cpp
+    src/core/XmodemSender.h
+    src/core/XmodemSender.cpp
     src/core/SessionProfile.h
     src/core/SessionManager.h
     src/core/SessionManager.cpp
@@ -218,6 +220,16 @@ target_link_libraries(clientosh PRIVATE
 )
 
 if(BUILD_TESTING)
+    add_executable(clientosh_xmodem_sender_test
+        tests/XmodemSenderTest.cpp
+        src/core/XmodemSender.cpp
+    )
+    target_include_directories(clientosh_xmodem_sender_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+    )
+    target_link_libraries(clientosh_xmodem_sender_test PRIVATE Qt6::Core)
+    add_test(NAME xmodem_sender COMMAND clientosh_xmodem_sender_test)
+
     add_executable(clientosh_profile_auth_test
         tests/ProfileAuthTest.cpp
         src/core/sync/SyncPayload.cpp

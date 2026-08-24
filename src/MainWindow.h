@@ -10,6 +10,7 @@
 class QStackedWidget;
 class QShortcut;
 class QShowEvent;
+class QProgressDialog;
 class SessionManager;
 class DashboardPage;
 class SessionWorkspace;
@@ -56,6 +57,8 @@ private:
     void openSftpFromSession(const QString& sessionId);
     void createSftpPane(const QString& panelId, const SessionProfile& profile);
     void wireSessionTerminal(const QString& id, TerminalWidget* term);
+    void startXmodemTransfer(const QString& id);
+    void closeXmodemProgress(const QString& id);
     TerminalWidget* findTerminal(const QString& id) const;
     void applyAlwaysOnTop(bool on);
 
@@ -65,6 +68,7 @@ private:
     DashboardPage* m_dashboard = nullptr;
     SessionWorkspace* m_workspace = nullptr;
     QHash<QString, SftpWindow*> m_sftpPanes;
+    QHash<QString, QProgressDialog*> m_xmodemProgressDialogs;
     QString m_pendingSftpSessionId;
     QSet<QString> m_sftpOnlySessionIds;
 
@@ -73,6 +77,7 @@ private:
     QShortcut* m_scDashboard = nullptr;
     QShortcut* m_scClosePanel = nullptr;
     QShortcut* m_scOpenSftp = nullptr;
+    QShortcut* m_scClearTerminal = nullptr;
     QShortcut* m_scFontLarger = nullptr;
     QShortcut* m_scFontSmaller = nullptr;
     QShortcut* m_scFontReset = nullptr;

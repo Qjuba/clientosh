@@ -1,6 +1,9 @@
 #include "SerialSession.h"
+#include "XmodemSender.h"
 
 #include <QDir>
+#include <QElapsedTimer>
+#include <QFile>
 #include <QMutexLocker>
 #include <QSet>
 
@@ -92,8 +95,11 @@ void SerialSession::connectTo(const SessionProfile& profile)
         QMutexLocker lock(&m_mutex);
         m_profile = profile;
         m_outgoing.clear();
+        m_xmodemRequestPath.clear();
         m_stop = false;
         m_connected = false;
+        m_xmodemActive = false;
+        m_xmodemCancelRequested = false;
     }
     start();
 }
@@ -107,13 +113,40 @@ void SerialSession::disconnectFromHost()
 void SerialSession::sendData(const QByteArray& data)
 {
     QMutexLocker lock(&m_mutex);
+    if (m_xmodemActive || !m_xmodemRequestPath.isEmpty()) return;
     m_outgoing.append(data);
+}
+
+void SerialSession::startXmodem(const QString& filePath)
+{
+    bool reject = false;
+    {
+        QMutexLocker lock(&m_mutex);
+        reject = !m_connected || m_xmodemActive || !m_xmodemRequestPath.isEmpty();
+        if (!reject) {
+            m_xmodemActive = true; // Reserve the transport immediately; block terminal input.
+            m_xmodemRequestPath = filePath;
+        }
+    }
+    if (reject) emit xmodemError(QStringLiteral("serial session is not ready for XMODEM"));
+}
+
+void SerialSession::cancelXmodem()
+{
+    QMutexLocker lock(&m_mutex);
+    if (m_xmodemActive || !m_xmodemRequestPath.isEmpty()) m_xmodemCancelRequested = true;
 }
 
 bool SerialSession::isConnected() const
 {
     QMutexLocker lock(&m_mutex);
     return m_connected;
+}
+
+bool SerialSession::isXmodemActive() const
+{
+    QMutexLocker lock(&m_mutex);
+    return m_xmodemActive || !m_xmodemRequestPath.isEmpty();
 }
 
 void SerialSession::run()
@@ -148,6 +181,7 @@ void SerialSession::run()
         return;
     }
     dcb.BaudRate = static_cast<DWORD>(profile.serialBaudRate);
+    dcb.fBinary = TRUE;
     dcb.ByteSize = static_cast<BYTE>(profile.serialDataBits);
     dcb.StopBits = profile.serialStopBits == 2 ? TWOSTOPBITS : ONESTOPBIT;
     const QString parity = profile.serialParity.toLower();
@@ -227,33 +261,117 @@ void SerialSession::run()
     emit connected();
     emit statusChanged(QStringLiteral("connected · Serial %1 @ %2").arg(device).arg(profile.serialBaudRate));
 
+    auto writeSerial = [&](const QByteArray& bytes, QString* error) -> bool {
+        qsizetype offset = 0;
+        QElapsedTimer writeClock;
+        writeClock.start();
+        while (offset < bytes.size()) {
+#ifdef Q_OS_WIN
+            DWORD written = 0;
+            if (!WriteFile(handle, bytes.constData() + offset,
+                           static_cast<DWORD>(bytes.size() - offset), &written, nullptr)) {
+                if (error) *error = QStringLiteral("serial write failed (Windows error %1)").arg(GetLastError());
+                return false;
+            }
+            if (written == 0) {
+                if (error) *error = QStringLiteral("serial write returned zero bytes");
+                return false;
+            }
+            offset += static_cast<qsizetype>(written);
+#else
+            const ssize_t n = ::write(handle, bytes.constData() + offset,
+                                      static_cast<size_t>(bytes.size() - offset));
+            if (n > 0) {
+                offset += n;
+            } else if (n < 0 && (errno == EAGAIN || errno == EINTR)) {
+                if (writeClock.elapsed() >= XmodemSender::TimeoutMs) {
+                    if (error) *error = QStringLiteral("serial write timed out");
+                    return false;
+                }
+                pollfd writable{handle, POLLOUT, 0};
+                ::poll(&writable, 1, 25);
+            } else {
+                if (error) *error = QStringLiteral("serial write failed: %1")
+                    .arg(QString::fromLocal8Bit(std::strerror(errno)));
+                return false;
+            }
+#endif
+        }
+        return true;
+    };
+
+    QElapsedTimer clock;
+    clock.start();
+    QFile xmodemFile;
+    XmodemSender xmodem;
+    qint64 reportedBytes = -1;
+    int reportedRetries = -1;
+    bool serialIoFailed = false;
+
     while (true) {
         QByteArray outgoing;
+        QString xmodemPath;
+        bool cancelXmodem = false;
         {
             QMutexLocker lock(&m_mutex);
             if (m_stop) break;
             outgoing.swap(m_outgoing);
+            xmodemPath.swap(m_xmodemRequestPath);
+            cancelXmodem = m_xmodemCancelRequested;
+            m_xmodemCancelRequested = false;
         }
+
+        if (!xmodemPath.isEmpty()) {
+            xmodemFile.close();
+            xmodemFile.setFileName(xmodemPath);
+            QString startError;
+            if (!xmodemFile.open(QIODevice::ReadOnly)) {
+                startError = QStringLiteral("cannot open %1: %2").arg(xmodemPath, xmodemFile.errorString());
+            } else if (!xmodem.start(&xmodemFile, clock.elapsed(), &startError)) {
+                xmodemFile.close();
+            }
+
+            if (!startError.isEmpty()) {
+                emit xmodemError(startError);
+                QMutexLocker lock(&m_mutex);
+                m_xmodemActive = false;
+            } else {
+                {
+                    QMutexLocker lock(&m_mutex);
+                    m_xmodemActive = true;
+                }
+                reportedBytes = 0;
+                reportedRetries = 0;
+                // CRC/checksum is negotiated when the receiver sends C/NAK.
+                emit xmodemStarted(xmodem.totalBytes());
+                emit xmodemProgress(0, xmodem.totalBytes(), 0);
+            }
+        }
+
+        if (cancelXmodem && xmodem.isActive()) xmodem.cancel();
+        xmodem.checkTimeout(clock.elapsed());
+        outgoing.append(xmodem.takeOutgoing());
+
         if (!outgoing.isEmpty()) {
-#ifdef Q_OS_WIN
-            DWORD written = 0;
-            if (!WriteFile(handle, outgoing.constData(), static_cast<DWORD>(outgoing.size()), &written, nullptr)) {
-                emit errorOccurred(QStringLiteral("serial write failed (Windows error %1)").arg(GetLastError()));
+            QString writeError;
+            if (!writeSerial(outgoing, &writeError)) {
+                emit errorOccurred(writeError);
+                serialIoFailed = true;
                 break;
             }
-#else
-            qsizetype offset = 0;
-            while (offset < outgoing.size()) {
-                const ssize_t n = ::write(handle, outgoing.constData() + offset,
-                                          static_cast<size_t>(outgoing.size() - offset));
-                if (n > 0) offset += n;
-                else if (errno != EAGAIN && errno != EINTR) {
-                    emit errorOccurred(QStringLiteral("serial write failed: %1")
-                                           .arg(QString::fromLocal8Bit(std::strerror(errno))));
-                    break;
-                }
+        }
+
+        if (xmodem.isDone()) {
+            const XmodemSender::State finalState = xmodem.state();
+            const QString transferError = xmodem.errorString();
+            xmodemFile.close();
+            {
+                QMutexLocker lock(&m_mutex);
+                m_xmodemActive = false;
             }
-#endif
+            if (finalState == XmodemSender::State::Finished) emit xmodemFinished();
+            else emit xmodemError(transferError);
+            xmodem = XmodemSender();
         }
 
         char buffer[4096];
@@ -261,21 +379,69 @@ void SerialSession::run()
         DWORD received = 0;
         if (!ReadFile(handle, buffer, sizeof(buffer), &received, nullptr)) {
             emit errorOccurred(QStringLiteral("serial read failed (Windows error %1)").arg(GetLastError()));
+            serialIoFailed = true;
             break;
         }
-        if (received > 0) emit dataReceived(QByteArray(buffer, static_cast<qsizetype>(received)));
+        if (received > 0) {
+            const QByteArray incoming(buffer, static_cast<qsizetype>(received));
+            if (xmodem.isActive()) {
+                const QByteArray remainder = xmodem.processIncoming(incoming, clock.elapsed());
+                if (!remainder.isEmpty()) emit dataReceived(remainder);
+            } else emit dataReceived(incoming);
+        }
 #else
         pollfd descriptor{handle, POLLIN, 0};
         const int ready = ::poll(&descriptor, 1, 25);
         if (ready > 0 && (descriptor.revents & POLLIN)) {
             const ssize_t received = ::read(handle, buffer, sizeof(buffer));
-            if (received > 0) emit dataReceived(QByteArray(buffer, received));
+            if (received > 0) {
+                const QByteArray incoming(buffer, received);
+                if (xmodem.isActive()) {
+                    const QByteArray remainder = xmodem.processIncoming(incoming, clock.elapsed());
+                    if (!remainder.isEmpty()) emit dataReceived(remainder);
+                } else emit dataReceived(incoming);
+            } else if (received == 0) {
+                emit errorOccurred(QStringLiteral("serial port was closed"));
+                serialIoFailed = true;
+                break;
+            } else if (errno != EAGAIN && errno != EINTR) {
+                emit errorOccurred(QStringLiteral("serial read failed: %1")
+                                       .arg(QString::fromLocal8Bit(std::strerror(errno))));
+                serialIoFailed = true;
+                break;
+            }
         } else if (ready < 0 && errno != EINTR) {
             emit errorOccurred(QStringLiteral("serial read failed: %1")
                                    .arg(QString::fromLocal8Bit(std::strerror(errno))));
+            serialIoFailed = true;
+            break;
+        } else if (ready > 0 && (descriptor.revents & (POLLERR | POLLHUP | POLLNVAL))) {
+            emit errorOccurred(QStringLiteral("serial port was closed"));
+            serialIoFailed = true;
             break;
         }
 #endif
+
+        if (xmodem.isActive()
+            && (xmodem.bytesAcknowledged() != reportedBytes || xmodem.retries() != reportedRetries)) {
+            reportedBytes = xmodem.bytesAcknowledged();
+            reportedRetries = xmodem.retries();
+            emit xmodemProgress(reportedBytes, xmodem.totalBytes(), reportedRetries);
+        }
+    }
+
+    bool transferWasReserved = false;
+    {
+        QMutexLocker lock(&m_mutex);
+        transferWasReserved = m_xmodemActive || !m_xmodemRequestPath.isEmpty();
+        m_xmodemActive = false;
+        m_xmodemRequestPath.clear();
+        m_xmodemCancelRequested = false;
+    }
+    if (xmodem.isActive() || xmodem.isDone() || transferWasReserved) {
+        xmodemFile.close();
+        if (serialIoFailed) emit xmodemError(QStringLiteral("XMODEM stopped because the serial port failed"));
+        else emit xmodemError(QStringLiteral("XMODEM stopped because the serial port was closed"));
     }
 
 #ifdef Q_OS_WIN

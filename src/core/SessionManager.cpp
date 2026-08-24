@@ -324,6 +324,21 @@ void SessionManager::wireSerialSession(LiveSession* live)
             emit sessionStatusChanged(id, s->status);
         }
     });
+    connect(live->serial, &SerialSession::xmodemStarted, this,
+            [this, id](qint64 totalBytes) {
+                if (session(id)) emit xmodemStarted(id, totalBytes);
+            });
+    connect(live->serial, &SerialSession::xmodemProgress, this,
+            [this, id](qint64 sentBytes, qint64 totalBytes, int retries) {
+                if (session(id)) emit xmodemProgress(id, sentBytes, totalBytes, retries);
+            });
+    connect(live->serial, &SerialSession::xmodemFinished, this, [this, id]() {
+        if (session(id)) emit xmodemFinished(id);
+    });
+    connect(live->serial, &SerialSession::xmodemError, this,
+            [this, id](const QString& message) {
+                if (session(id)) emit xmodemError(id, message);
+            });
 }
 
 void SessionManager::retireSsh(SshSession* ssh)
@@ -440,6 +455,17 @@ void SessionManager::sendData(const QString& id, const QByteArray& data)
             s->serial->sendData(data);
         }
     }
+}
+
+void SessionManager::startXmodem(const QString& id, const QString& filePath)
+{
+    if (auto* s = session(id); s && s->serial) s->serial->startXmodem(filePath);
+    else emit xmodemError(id, QStringLiteral("XMODEM is available only for serial sessions"));
+}
+
+void SessionManager::cancelXmodem(const QString& id)
+{
+    if (auto* s = session(id); s && s->serial) s->serial->cancelXmodem();
 }
 
 void SessionManager::resizePty(const QString& id, int cols, int rows)

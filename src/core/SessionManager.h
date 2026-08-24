@@ -45,6 +45,8 @@ public:
     bool isDetached(const QString& id) const;
 
     void sendData(const QString& id, const QByteArray& data);
+    void startXmodem(const QString& id, const QString& filePath);
+    void cancelXmodem(const QString& id);
     void resizePty(const QString& id, int cols, int rows);
 
     QString activeId() const { return m_activeId; }
@@ -65,6 +67,10 @@ signals:
     void sessionDetachChanged(const QString& id, bool detached);
     void sessionDataReceived(const QString& id, const QByteArray& data);
     void sessionError(const QString& id, const QString& message);
+    void xmodemStarted(const QString& id, qint64 totalBytes);
+    void xmodemProgress(const QString& id, qint64 sentBytes, qint64 totalBytes, int retries);
+    void xmodemFinished(const QString& id);
+    void xmodemError(const QString& id, const QString& message);
 
 private:
     static QString connectedLabel(const SessionProfile& profile);

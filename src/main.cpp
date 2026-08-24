@@ -82,6 +82,9 @@ QJsonObject commandFromCliRequest(const CliLaunch::Request& req)
     if (!profile.keyPassphrase.isEmpty()) {
         request.insert(QStringLiteral("keyPassphrase"), profile.keyPassphrase);
     }
+    if (profile.authMethod == AuthMethod::SshAgent) {
+        request.insert(QStringLiteral("authMethod"), authMethodToString(profile.authMethod));
+    }
     if (req.openSftpWithSsh) {
         request.insert(QStringLiteral("openSftp"), true);
     }
@@ -126,16 +129,25 @@ SessionProfile profileFromCommand(const QJsonObject& request)
     }
     if (request.contains(QStringLiteral("password"))) {
         profile.password = request.value(QStringLiteral("password")).toString();
+        profile.authMethod = AuthMethod::Password;
     }
     if (request.contains(QStringLiteral("identity"))) {
         profile.privateKeyPath = request.value(QStringLiteral("identity")).toString().trimmed();
+        profile.authMethod = AuthMethod::KeyFile;
     }
     if (request.contains(QStringLiteral("keyring"))) {
         profile.privateKeyId = request.value(QStringLiteral("keyring")).toString().trimmed();
+        profile.authMethod = AuthMethod::StoredKey;
+    }
+    if (request.contains(QStringLiteral("authMethod"))) {
+        profile.authMethod = authMethodFromString(
+            request.value(QStringLiteral("authMethod")).toString(),
+            profile.privateKeyId, profile.privateKeyPath);
     }
     if (request.contains(QStringLiteral("keyPassphrase"))) {
         profile.keyPassphrase = request.value(QStringLiteral("keyPassphrase")).toString();
     }
+    profile.normalizeAuthentication();
     return profile;
 }
 

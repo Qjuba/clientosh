@@ -11,8 +11,8 @@
  * Each platform maps to its native password store:
  *   - Windows  : Windows Credential Manager (CredWriteW / CredReadW).
  *   - macOS    : macOS Keychain (SecItemAdd / SecItemCopyMatching).
- *   - Linux    : Secret Service via libsecret, loaded at runtime with dlopen so
- *                the build has no hard dependency on the Secret Service headers.
+ *   - Linux    : Secret Service via the `secret-tool` runtime command, keeping
+ *                the build free of a compile-time libsecret dependency.
  *
  * If the native store is unavailable (no keyring daemon, headless/CI, etc.) the
  * adapter transparently falls back to a local file store whose entries are each

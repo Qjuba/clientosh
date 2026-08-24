@@ -121,9 +121,11 @@ private:
     void setNavPage(NavPage page);
     void browsePrivateKey();
     void reloadKeyringCombo();
-    void rebuildStoredKeysFromForm();
     void importKeyIntoKeyring();
+    void renameSelectedStoredKey();
+    void editSelectedStoredKeyPassphrase();
     void removeSelectedKeyringKey();
+    void updateStoredKeyActions();
     void onKeyringSelectionChanged(int index);
     void updateAuthMethodUi();
     void updateConnectionModeUi();
@@ -162,6 +164,8 @@ private:
     QLabel* m_savedEmpty = nullptr;
     QTableWidget* m_keysTable = nullptr;
     QLabel* m_keysEmpty = nullptr;
+    QLabel* m_keysStatus = nullptr;
+    QLabel* m_agentStatus = nullptr;
     QPlainTextEdit* m_logsView = nullptr;
 
     QLabel* m_formTitle = nullptr;
@@ -193,6 +197,9 @@ private:
     QComboBox* m_keyringCombo = nullptr;
     QPushButton* m_importKeyBtn = nullptr;
     QPushButton* m_removeKeyBtn = nullptr;
+    QPushButton* m_renameKeyBtn = nullptr;
+    QPushButton* m_passphraseKeyBtn = nullptr;
+    QPushButton* m_manageKeysBtn = nullptr;
     QLineEdit* m_keyPassEdit = nullptr;
     QCheckBox* m_saveKeyPass = nullptr;
     QPushButton* m_browseKeyBtn = nullptr;
@@ -316,7 +323,7 @@ private:
     QVector<SessionProfile> m_profiles;
     QStringList m_tags;
     QHash<QString, QStringList> m_tagAssignments; // tagName → profile IDs
-    QStringList m_tagCollapsed;                   // tagNames currently collapsed
+    QStringList m_tagCollapsed;                   // stable keys of collapsed host folders
     QString m_editingId;
     NavPage m_currentNav = NavPage::Hosts;
 };

@@ -16,7 +16,10 @@
 #include "core/VaultManager.h"
 #include "ui/Motion.h"
 
+#include <libssh/libssh.h>
+
 #include <QAbstractItemView>
+#include <QAbstractButton>
 #include <QApplication>
 #include <QButtonGroup>
 #include <QCheckBox>
@@ -35,6 +38,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QPainter>
 #include <QFrame>
 #include <QSysInfo>
 #include <QUuid>
@@ -52,9 +57,11 @@
 #include <QScrollArea>
 #include <QSet>
 #include <QSettings>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QStyledItemDelegate>
 #include <QStyle>
 #include <QTableWidget>
 #include <QToolButton>
@@ -63,6 +70,34 @@
 #include <QVBoxLayout>
 
 namespace {
+constexpr int kHostFolderStateRole = Qt::UserRole + 2;
+
+QString hostTagFolderKey(const QString& tagName)
+{
+    return tagName.isEmpty() ? QStringLiteral("folder:untagged")
+                             : QStringLiteral("folder:tag:%1").arg(tagName);
+}
+
+QString hostLiveFolderKey()
+{
+    return QStringLiteral("folder:current-sessions");
+}
+
+int detectPrivateKeyPassphrase(const char* /*prompt*/, char* /*buf*/, size_t /*len*/,
+                               int /*echo*/, int /*verify*/, void* userdata)
+{
+    *static_cast<bool*>(userdata) = true;
+    return -1; // Detection only; the UI asks for the passphrase explicitly.
+}
+
+void wipeBytes(QByteArray& bytes)
+{
+    if (!bytes.isNull()) {
+        bytes.fill('\0');
+        bytes.clear();
+    }
+}
+
 QToolButton* makeSidebarNav(const QString& iconPath, const QString& text, QWidget* parent)
 {
     auto* btn = new Motion::HoverFillButton(parent);
@@ -93,6 +128,55 @@ QToolButton* makeRowIcon(const QString& iconPath, const QString& tip, QWidget* p
     btn->setHoverFill(QColor(0x3c, 0x3c, 0x3c));
     return btn;
 }
+
+class HoverRowDelegate final : public QStyledItemDelegate
+{
+public:
+    explicit HoverRowDelegate(QTableWidget* table)
+        : QStyledItemDelegate(table)
+        , m_table(table)
+    {
+        table->viewport()->setMouseTracking(true);
+        table->viewport()->installEventFilter(this);
+    }
+
+    void paint(QPainter* painter, const QStyleOptionViewItem& option,
+               const QModelIndex& index) const override
+    {
+        QStyleOptionViewItem rowOption(option);
+        // Selection has its own stronger visual state. Otherwise make every
+        // cell in the hovered row share the hover state.
+        if (!(rowOption.state & QStyle::State_Selected) && index.row() == m_hoveredRow) {
+            rowOption.state |= QStyle::State_MouseOver;
+        } else {
+            rowOption.state &= ~QStyle::State_MouseOver;
+        }
+        QStyledItemDelegate::paint(painter, rowOption, index);
+    }
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override
+    {
+        if (m_table && watched == m_table->viewport()) {
+            int row = m_hoveredRow;
+            if (event->type() == QEvent::MouseMove) {
+                const auto* mouseEvent = static_cast<QMouseEvent*>(event);
+                row = m_table->indexAt(mouseEvent->position().toPoint()).row();
+            } else if (event->type() == QEvent::Leave || event->type() == QEvent::Hide) {
+                row = -1;
+            }
+            if (row != m_hoveredRow) {
+                m_hoveredRow = row;
+                m_table->viewport()->update();
+            }
+        }
+        return QStyledItemDelegate::eventFilter(watched, event);
+    }
+
+private:
+    QTableWidget* m_table = nullptr;
+    int m_hoveredRow = -1;
+};
 
 void styleTable(QTableWidget* table)
 {
@@ -143,7 +227,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_navGroup->setExclusive(true);
 
     m_navHosts = makeSidebarNav(QStringLiteral(":/icons/hosts.svg"), QStringLiteral("Hosts"), m_sidebar);
-    m_navKeys = makeSidebarNav(QStringLiteral(":/icons/key.svg"), QStringLiteral("Keychain"), m_sidebar);
+    m_navKeys = makeSidebarNav(QStringLiteral(":/icons/key.svg"), QStringLiteral("SSH Keys"), m_sidebar);
     m_navLogs = makeSidebarNav(QStringLiteral(":/icons/logs.svg"), QStringLiteral("Logs"), m_sidebar);
     m_navSettings = makeSidebarNav(QStringLiteral(":/icons/settings.svg"), QStringLiteral("Settings"), m_sidebar);
 
@@ -281,18 +365,27 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
                 }
             });
     connect(m_savedTree, &QTreeWidget::itemExpanded, this, [this](QTreeWidgetItem* it) {
-        if (it->parent() == nullptr
-            && it->data(0, Qt::UserRole + 1).toString() != QLatin1String("live-header")) {
-            m_tagCollapsed.removeAll(it->data(0, Qt::UserRole).toString());
+        if (it->parent() == nullptr) {
+            const bool liveFolder = it->data(0, Qt::UserRole + 1).toString()
+                == QLatin1String("live-header");
+            m_tagCollapsed.removeAll(it->data(0, kHostFolderStateRole).toString());
+            // Remove entries written by older versions, which stored raw tag names.
+            if (!liveFolder) {
+                m_tagCollapsed.removeAll(it->data(0, Qt::UserRole).toString());
+            }
             AppSettings::setTagCollapsed(m_tagCollapsed);
         }
     });
     connect(m_savedTree, &QTreeWidget::itemCollapsed, this, [this](QTreeWidgetItem* it) {
-        if (it->parent() == nullptr
-            && it->data(0, Qt::UserRole + 1).toString() != QLatin1String("live-header")) {
-            const QString tag = it->data(0, Qt::UserRole).toString();
-            if (!m_tagCollapsed.contains(tag)) {
-                m_tagCollapsed.append(tag);
+        if (it->parent() == nullptr) {
+            const bool liveFolder = it->data(0, Qt::UserRole + 1).toString()
+                == QLatin1String("live-header");
+            const QString key = it->data(0, kHostFolderStateRole).toString();
+            if (!liveFolder) {
+                m_tagCollapsed.removeAll(it->data(0, Qt::UserRole).toString());
+            }
+            if (!key.isEmpty() && !m_tagCollapsed.contains(key)) {
+                m_tagCollapsed.append(key);
             }
             AppSettings::setTagCollapsed(m_tagCollapsed);
         }
@@ -312,27 +405,54 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     hostsLay->addWidget(m_hint);
     m_stack->addWidget(m_hostsPage);
 
-    // ---- Keychain page ----
+    // ---- SSH keys page ----
     m_keysPage = new QWidget;
     auto* keysLay = new QVBoxLayout(m_keysPage);
     keysLay->setContentsMargins(16, 12, 16, 10);
     keysLay->setSpacing(8);
 
-    m_keysTable = new QTableWidget(0, 3, m_keysPage);
+    auto* keysToolbar = new QWidget(m_keysPage);
+    auto* keysToolbarLay = new QHBoxLayout(keysToolbar);
+    keysToolbarLay->setContentsMargins(0, 0, 0, 0);
+    keysToolbarLay->setSpacing(6);
+    m_agentStatus = new QLabel(m_keysPage);
+    m_agentStatus->setObjectName(QStringLiteral("dashHint"));
+    m_importKeyBtn = new QPushButton(QStringLiteral("Import key…"), m_keysPage);
+    m_renameKeyBtn = new QPushButton(QStringLiteral("Rename"), m_keysPage);
+    m_passphraseKeyBtn = new QPushButton(QStringLiteral("Passphrase…"), m_keysPage);
+    m_removeKeyBtn = new QPushButton(QStringLiteral("Remove"), m_keysPage);
+    for (QPushButton* button : {m_importKeyBtn, m_renameKeyBtn, m_passphraseKeyBtn, m_removeKeyBtn}) {
+        button->setObjectName(QStringLiteral("dashButton"));
+        button->setFocusPolicy(Qt::NoFocus);
+    }
+    keysToolbarLay->addWidget(m_agentStatus, 1);
+    keysToolbarLay->addWidget(m_importKeyBtn);
+    keysToolbarLay->addWidget(m_renameKeyBtn);
+    keysToolbarLay->addWidget(m_passphraseKeyBtn);
+    keysToolbarLay->addWidget(m_removeKeyBtn);
+    keysLay->addWidget(keysToolbar);
+
+    m_keysTable = new QTableWidget(0, 4, m_keysPage);
     styleTable(m_keysTable);
+    m_keysTable->setItemDelegate(new HoverRowDelegate(m_keysTable));
     m_keysTable->setHorizontalHeaderLabels(
-        {QStringLiteral("profile"), QStringLiteral("password"), QStringLiteral("private key")});
+        {QStringLiteral("name"), QStringLiteral("type"), QStringLiteral("fingerprint"),
+         QStringLiteral("used by")});
     m_keysTable->horizontalHeader()->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_keysTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::Stretch);
     m_keysTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_keysTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    m_keysTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::Stretch);
+    m_keysTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     keysLay->addWidget(m_keysTable, 1);
 
-    m_keysEmpty = new QLabel(QStringLiteral("no stored credentials"), m_keysPage);
+    m_keysEmpty = new QLabel(QStringLiteral("no stored SSH keys — import one to reuse it across hosts"), m_keysPage);
     m_keysEmpty->setObjectName(QStringLiteral("dashHint"));
     m_keysEmpty->setAlignment(Qt::AlignCenter);
     // Match the Hosts empty-state geometry by filling the table area.
     keysLay->addWidget(m_keysEmpty, 1);
+    m_keysStatus = new QLabel(m_keysPage);
+    m_keysStatus->setObjectName(QStringLiteral("dashHint"));
+    keysLay->addWidget(m_keysStatus);
     m_stack->addWidget(m_keysPage);
 
     // ---- Logs page ----
@@ -373,6 +493,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_settingsNav->setObjectName(QStringLiteral("settingsNav"));
     m_settingsNav->setFixedWidth(148);
     m_settingsNav->setFocusPolicy(Qt::NoFocus);
+    m_settingsNav->viewport()->setCursor(Qt::PointingHandCursor);
     m_settingsNav->setSpacing(1);
     m_settingsNav->addItems({QStringLiteral("General"), QStringLiteral("Appearance"),
                              QStringLiteral("Performance"), QStringLiteral("SSH / Sessions"),
@@ -1330,9 +1451,10 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     formLay->addWidget(m_authSectionRule);
 
     m_authMethodCombo = new QComboBox(formInner);
-    m_authMethodCombo->addItem(QStringLiteral("Password"), 0);
-    m_authMethodCombo->addItem(QStringLiteral("Private key (keyring)"), 1);
-    m_authMethodCombo->addItem(QStringLiteral("Private key (file)"), 2);
+    m_authMethodCombo->addItem(QStringLiteral("Password"), static_cast<int>(AuthMethod::Password));
+    m_authMethodCombo->addItem(QStringLiteral("SSH Agent"), static_cast<int>(AuthMethod::SshAgent));
+    m_authMethodCombo->addItem(QStringLiteral("Stored key"), static_cast<int>(AuthMethod::StoredKey));
+    m_authMethodCombo->addItem(QStringLiteral("Key file"), static_cast<int>(AuthMethod::KeyFile));
     m_authMethodLabel = new QLabel(QStringLiteral("Method"), formInner);
     m_authMethodLabel->setObjectName(QStringLiteral("fieldLabel"));
     formLay->addWidget(m_authMethodLabel);
@@ -1357,22 +1479,18 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         lay->setContentsMargins(0, 4, 0, 0);
         lay->setSpacing(6);
         m_keyringCombo = new QComboBox(m_authKeyringPanel);
-        m_importKeyBtn = new QPushButton(QStringLiteral("Import…"), m_authKeyringPanel);
-        m_importKeyBtn->setObjectName(QStringLiteral("dashButton"));
-        m_importKeyBtn->setFocusPolicy(Qt::NoFocus);
-        m_removeKeyBtn = new QPushButton(QStringLiteral("Remove"), m_authKeyringPanel);
-        m_removeKeyBtn->setObjectName(QStringLiteral("dashButton"));
-        m_removeKeyBtn->setFocusPolicy(Qt::NoFocus);
+        m_manageKeysBtn = new QPushButton(QStringLiteral("Manage keys…"), m_authKeyringPanel);
+        m_manageKeysBtn->setObjectName(QStringLiteral("dashButton"));
+        m_manageKeysBtn->setFocusPolicy(Qt::NoFocus);
         auto* keyringRow = new QWidget(m_authKeyringPanel);
         auto* keyringLay = new QHBoxLayout(keyringRow);
         keyringLay->setContentsMargins(0, 0, 0, 0);
         keyringLay->setSpacing(6);
         keyringLay->addWidget(m_keyringCombo, 1);
-        keyringLay->addWidget(m_importKeyBtn);
-        keyringLay->addWidget(m_removeKeyBtn);
+        keyringLay->addWidget(m_manageKeysBtn);
         addLabeled(lay, QStringLiteral("Saved key"), keyringRow);
         auto* hint = new QLabel(
-            QStringLiteral("Keys are stored encrypted in the local keyring."),
+            QStringLiteral("Keys are managed centrally in SSH Keys and encrypted in the local vault."),
             m_authKeyringPanel);
         hint->setObjectName(QStringLiteral("dashHint"));
         hint->setWordWrap(true);
@@ -1406,7 +1524,7 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
         m_keyPassEdit = new QLineEdit(m_authPassphrasePanel);
         m_keyPassEdit->setPlaceholderText(QStringLiteral("leave empty if the key is not encrypted"));
         m_keyPassEdit->setEchoMode(QLineEdit::Password);
-        m_saveKeyPass = new QCheckBox(QStringLiteral("Save passphrase with this profile"),
+        m_saveKeyPass = new QCheckBox(QStringLiteral("Save passphrase"),
                                      m_authPassphrasePanel);
         addLabeled(lay, QStringLiteral("Key passphrase (optional)"), m_keyPassEdit);
         lay->addWidget(m_saveKeyPass);
@@ -1457,7 +1575,13 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     connect(connectBtn, &QPushButton::clicked, this, &DashboardPage::connectFromForm);
     connect(m_browseKeyBtn, &QPushButton::clicked, this, &DashboardPage::browsePrivateKey);
     connect(m_importKeyBtn, &QPushButton::clicked, this, &DashboardPage::importKeyIntoKeyring);
+    connect(m_renameKeyBtn, &QPushButton::clicked, this, &DashboardPage::renameSelectedStoredKey);
+    connect(m_passphraseKeyBtn, &QPushButton::clicked,
+            this, &DashboardPage::editSelectedStoredKeyPassphrase);
     connect(m_removeKeyBtn, &QPushButton::clicked, this, &DashboardPage::removeSelectedKeyringKey);
+    connect(m_manageKeysBtn, &QPushButton::clicked, this, [this]() { setNavPage(NavPage::Keychain); });
+    connect(m_keysTable, &QTableWidget::itemSelectionChanged,
+            this, &DashboardPage::updateStoredKeyActions);
     connect(m_keyringCombo, &QComboBox::currentIndexChanged, this, &DashboardPage::onKeyringSelectionChanged);
     connect(m_authMethodCombo, &QComboBox::currentIndexChanged, this, [this](int) {
         updateAuthMethodUi();
@@ -1524,10 +1648,14 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
                 return false;
             }
             // Persist sessions + keyring
-            saveProfiles(p.profiles);
+            if (!saveProfiles(p.profiles)) {
+                return false;
+            }
             VaultManager v;
             for (const StoredKey& k : p.keys) {
-                v.storeStoredKey(k);
+                if (!v.storeStoredKey(k)) {
+                    return false;
+                }
             }
             m_profiles = p.profiles;
             rebuildSavedList();
@@ -1678,6 +1806,10 @@ DashboardPage::DashboardPage(SessionManager* sessions, QWidget* parent)
     m_navHosts->setChecked(true);
     setNavPage(NavPage::Hosts);
     refresh();
+
+    for (QAbstractButton* button : findChildren<QAbstractButton*>()) {
+        button->setCursor(Qt::PointingHandCursor);
+    }
 }
 
 QToolButton* DashboardPage::makeNavButton(const QString& iconPath, const QString& text, QWidget* parent)
@@ -2078,8 +2210,8 @@ void DashboardPage::updateTopBar()
         break;
     case NavPage::Active: // unreachable (entry removed)
     case NavPage::Keychain:
-        m_pageTitle->setText(QStringLiteral("Keychain"));
-        m_pageSub->setText(QStringLiteral("stored credentials overview"));
+        m_pageTitle->setText(QStringLiteral("SSH Keys"));
+        m_pageSub->setText(QStringLiteral("stored keys and SSH agent status"));
         break;
     case NavPage::Logs:
         m_pageTitle->setText(QStringLiteral("Logs"));
@@ -2230,14 +2362,12 @@ void DashboardPage::loadProfileIntoForm(const SessionProfile& profile)
     m_keyPathEdit->setText(profile.privateKeyPath);
     reloadKeyringCombo();
 
-    int authMethod = 0; // password
-    if (!profile.privateKeyId.trimmed().isEmpty()) {
-        authMethod = 1; // keyring
+    const int authMethod = static_cast<int>(profile.authMethod);
+    if (profile.authMethod == AuthMethod::StoredKey) {
         const int idx = m_keyringCombo->findData(profile.privateKeyId);
         m_keyringCombo->setCurrentIndex(idx >= 0 ? idx : 0);
         m_keyPathEdit->clear();
-    } else if (!profile.privateKeyPath.trimmed().isEmpty()) {
-        authMethod = 2; // file
+    } else if (profile.authMethod == AuthMethod::KeyFile) {
         if (m_keyringCombo->count() > 0) {
             m_keyringCombo->setCurrentIndex(0);
         }
@@ -2268,7 +2398,7 @@ void DashboardPage::browsePrivateKey()
     if (!path.isEmpty()) {
         m_keyPathEdit->setText(QDir::toNativeSeparators(path));
         if (m_authMethodCombo) {
-            const int idx = m_authMethodCombo->findData(2);
+            const int idx = m_authMethodCombo->findData(static_cast<int>(AuthMethod::KeyFile));
             if (idx >= 0) {
                 m_authMethodCombo->setCurrentIndex(idx);
             }
@@ -2286,6 +2416,12 @@ void DashboardPage::reloadKeyringCombo()
     m_keyringCombo->blockSignals(true);
     m_keyringCombo->clear();
     VaultManager vault;
+    if (!vault.usingNativeKeyring()) {
+        m_keysStatus->setText(QStringLiteral(
+            "Security warning: OS keyring is unavailable; the encrypted machine-bound fallback is active."));
+    } else if (m_keysStatus->text().startsWith(QStringLiteral("Security warning:"))) {
+        m_keysStatus->clear();
+    }
     const QVector<StoredKey> keys = vault.listStoredKeys();
     if (keys.isEmpty()) {
         m_keyringCombo->addItem(QStringLiteral("No keys yet - import one"), QString());
@@ -2344,9 +2480,9 @@ void DashboardPage::updateAuthMethodUi()
     const bool telnet = (mode == ConnectionMode::Telnet);
     const bool serial = (mode == ConnectionMode::Serial);
     const int method = m_authMethodCombo->currentData().toInt();
-    const bool password = !serial && (telnet || (method == 0));
-    const bool keyring = !telnet && !serial && (method == 1);
-    const bool keyFile = !telnet && !serial && (method == 2);
+    const bool password = !serial && (telnet || (method == static_cast<int>(AuthMethod::Password)));
+    const bool keyring = !telnet && !serial && (method == static_cast<int>(AuthMethod::StoredKey));
+    const bool keyFile = !telnet && !serial && (method == static_cast<int>(AuthMethod::KeyFile));
     if (m_authPasswordPanel) {
         m_authPasswordPanel->setVisible(password);
     }
@@ -2359,14 +2495,23 @@ void DashboardPage::updateAuthMethodUi()
     if (m_authPassphrasePanel) {
         m_authPassphrasePanel->setVisible(keyring || keyFile);
     }
+    if (m_saveKeyPass) {
+        m_saveKeyPass->setText(keyring
+            ? QStringLiteral("Save passphrase with this key")
+            : QStringLiteral("Save passphrase with this profile"));
+    }
 }
 
 void DashboardPage::onKeyringSelectionChanged(int /*index*/)
 {
-    const bool hasKeyringKey = m_keyringCombo && !m_keyringCombo->currentData().toString().isEmpty();
-    if (m_removeKeyBtn) {
-        m_removeKeyBtn->setEnabled(hasKeyringKey);
-    }
+    if (!m_keyringCombo || !m_keyPassEdit || !m_saveKeyPass) return;
+    const QString id = m_keyringCombo->currentData().toString();
+    QByteArray passphrase;
+    VaultManager vault;
+    const bool stored = !id.isEmpty() && vault.retrieveStoredKeyPassphrase(id, passphrase);
+    m_keyPassEdit->setText(stored ? QString::fromUtf8(passphrase) : QString());
+    m_saveKeyPass->setChecked(stored);
+    passphrase.fill('\0');
 }
 
 void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
@@ -2390,6 +2535,7 @@ void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
         profile->privateKeyPath.clear();
         profile->keyPassphrase.clear();
         profile->saveKeyPassphrase = false;
+        profile->authMethod = AuthMethod::Password;
         profile->serialBaudRate = m_serialBaudCombo->currentText().toInt();
         profile->serialDataBits = m_serialDataBitsCombo->currentText().toInt();
         profile->serialParity = m_serialParityCombo->currentText();
@@ -2406,6 +2552,7 @@ void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
         profile->savePassword = m_savePass->isChecked();
         profile->keyPassphrase.clear();
         profile->saveKeyPassphrase = false;
+        profile->authMethod = AuthMethod::Password;
         if (!profile->savePassword) {
             profile->password.clear();
         }
@@ -2413,15 +2560,15 @@ void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
     }
 
     const int method = m_authMethodCombo ? m_authMethodCombo->currentData().toInt() : 0;
-    if (method == 1) {
-        // Keyring key
+    profile->authMethod = static_cast<AuthMethod>(method);
+    if (profile->authMethod == AuthMethod::StoredKey) {
         profile->privateKeyId = m_keyringCombo->currentData().toString();
         profile->privateKeyPath.clear();
         profile->password.clear();
         profile->savePassword = false;
         profile->keyPassphrase = m_keyPassEdit->text();
         profile->saveKeyPassphrase = m_saveKeyPass->isChecked();
-    } else if (method == 2) {
+    } else if (profile->authMethod == AuthMethod::KeyFile) {
         // Key file
         profile->privateKeyId.clear();
         profile->privateKeyPath = m_keyPathEdit->text().trimmed();
@@ -2429,7 +2576,7 @@ void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
         profile->savePassword = false;
         profile->keyPassphrase = m_keyPassEdit->text();
         profile->saveKeyPassphrase = m_saveKeyPass->isChecked();
-    } else {
+    } else if (profile->authMethod == AuthMethod::Password) {
         // Password
         profile->privateKeyId.clear();
         profile->privateKeyPath.clear();
@@ -2440,17 +2587,23 @@ void DashboardPage::fillProfileFromForm(SessionProfile* profile) const
         if (!profile->savePassword) {
             profile->password.clear();
         }
+    } else {
+        // SSH agent owns the key material and passphrase.
+        profile->privateKeyId.clear();
+        profile->privateKeyPath.clear();
+        profile->password.clear();
+        profile->savePassword = false;
+        profile->keyPassphrase.clear();
+        profile->saveKeyPassphrase = false;
     }
 }
 
 void DashboardPage::importKeyIntoKeyring()
 {
-    const QString startDir = m_keyPathEdit->text().trimmed().isEmpty()
-        ? QDir::homePath() + QStringLiteral("/.ssh")
-        : QFileInfo(m_keyPathEdit->text()).absolutePath();
+    const QString startDir = QDir::homePath() + QStringLiteral("/.ssh");
     const QString path = QFileDialog::getOpenFileName(
         this,
-        QStringLiteral("Import private key into keyring"),
+        QStringLiteral("Import SSH private key"),
         startDir,
         QStringLiteral("Private keys (id_rsa id_ed25519 id_ecdsa id_dsa *);;All files (*)"));
     if (path.isEmpty()) {
@@ -2459,79 +2612,270 @@ void DashboardPage::importKeyIntoKeyring()
 
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly)) {
-        m_hint->setText(QStringLiteral("cannot read key file: %1").arg(path));
+        m_keysStatus->setText(QStringLiteral("cannot read key file: %1").arg(path));
         return;
     }
-    const QByteArray pem = f.readAll();
+    QByteArray pem = f.readAll();
+    f.close();
     const QString baseName = QFileInfo(path).fileName();
+
+    bool passphraseRequired = false;
+    QByteArray validatedPassphrase;
+    ssh_key parsedKey = nullptr;
+    int importRc = ssh_pki_import_privkey_base64(pem.constData(), nullptr,
+                                                  detectPrivateKeyPassphrase,
+                                                  &passphraseRequired,
+                                                  &parsedKey);
+    if (importRc != SSH_OK || !parsedKey) {
+        if (parsedKey) {
+            ssh_key_free(parsedKey);
+            parsedKey = nullptr;
+        }
+        if (!passphraseRequired) {
+            wipeBytes(pem);
+            m_keysStatus->setText(QStringLiteral("selected file is not a valid private key"));
+            return;
+        }
+
+        bool passphraseAccepted = false;
+        QString passphrase = QInputDialog::getText(
+            this,
+            QStringLiteral("Encrypted private key"),
+            QStringLiteral("Enter the key passphrase to validate it:"),
+            QLineEdit::Password,
+            QString(),
+            &passphraseAccepted);
+        if (!passphraseAccepted) {
+            wipeBytes(pem);
+            return;
+        }
+
+        QByteArray passphraseUtf8 = passphrase.toUtf8();
+        importRc = ssh_pki_import_privkey_base64(
+            pem.constData(), passphraseUtf8.constData(), nullptr, nullptr, &parsedKey);
+        if (importRc == SSH_OK && parsedKey) {
+            validatedPassphrase = passphraseUtf8;
+        }
+        passphrase.fill(QChar(u'\0'));
+        wipeBytes(passphraseUtf8);
+        if (importRc != SSH_OK || !parsedKey) {
+            wipeBytes(pem);
+            m_keysStatus->setText(QStringLiteral("wrong passphrase or invalid private key"));
+            return;
+        }
+    }
+
+    const char* parsedType = ssh_key_type_to_char(ssh_key_type(parsedKey));
 
     bool ok = false;
     const QString displayName = QInputDialog::getText(
         this,
-        QStringLiteral("Keyring key name"),
+        QStringLiteral("SSH key name"),
         QStringLiteral("Give this key a memorable name:"),
         QLineEdit::Normal,
         baseName,
         &ok);
     if (!ok) {
+        ssh_key_free(parsedKey);
+        wipeBytes(pem);
+        wipeBytes(validatedPassphrase);
         return;
     }
 
     StoredKey key;
     key.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     key.name = displayName.trimmed().isEmpty() ? baseName : displayName.trimmed();
-    // Detect type from the PEM header so we can label it in the picker/keychain.
-    if (pem.contains(QByteArrayLiteral("OPENSSH PRIVATE KEY"))) {
-        key.type = QStringLiteral("openssh");
-    } else if (pem.contains(QByteArrayLiteral("EC PRIVATE KEY"))) {
-        key.type = QStringLiteral("ec");
-    } else {
-        key.type = QStringLiteral("pem");
+    key.type = parsedType ? QString::fromLatin1(parsedType) : QStringLiteral("unknown");
+    unsigned char* hash = nullptr;
+    size_t hashLen = 0;
+    if (ssh_get_publickey_hash(parsedKey, SSH_PUBLICKEY_HASH_SHA256, &hash, &hashLen) == SSH_OK) {
+        char* fingerprint = ssh_get_fingerprint_hash(SSH_PUBLICKEY_HASH_SHA256, hash, hashLen);
+        if (fingerprint) {
+            key.fingerprint = QString::fromLatin1(fingerprint);
+            ssh_string_free_char(fingerprint);
+        }
+        ssh_clean_pubkey_hash(&hash);
     }
+    key.pem = pem;
+    key.hasPassphrase = passphraseRequired;
+    ssh_key_free(parsedKey);
 
     VaultManager vault;
-    if (!vault.storeStoredKey(key)) {
-        m_hint->setText(QStringLiteral("failed to store key in the keyring"));
+    const bool stored = vault.storeStoredKey(key);
+    wipeBytes(key.pem);
+    wipeBytes(pem);
+    if (!stored) {
+        wipeBytes(validatedPassphrase);
+        m_keysStatus->setText(QStringLiteral("failed to store key in the encrypted vault"));
         return;
     }
+    bool passphraseStoreFailed = false;
+    if (key.hasPassphrase && !validatedPassphrase.isEmpty()) {
+        const auto remember = QMessageBox::question(
+            this, QStringLiteral("Remember passphrase"),
+            QStringLiteral("Save this passphrase in the encrypted vault for every profile using this key?"));
+        if (remember == QMessageBox::Yes
+            && !vault.storeStoredKeyPassphrase(key.id, validatedPassphrase)) {
+            passphraseStoreFailed = true;
+            m_keysStatus->setText(QStringLiteral("key imported, but its passphrase could not be saved"));
+        }
+    }
+    wipeBytes(validatedPassphrase);
     reloadKeyringCombo();
     const int idx = m_keyringCombo->findData(key.id);
     if (idx >= 0) {
         m_keyringCombo->setCurrentIndex(idx);
     }
     if (m_authMethodCombo) {
-        const int authIdx = m_authMethodCombo->findData(1);
+        const int authIdx = m_authMethodCombo->findData(static_cast<int>(AuthMethod::StoredKey));
         if (authIdx >= 0) {
             m_authMethodCombo->setCurrentIndex(authIdx);
         }
         updateAuthMethodUi();
     }
     onKeyringSelectionChanged(m_keyringCombo->currentIndex());
-    m_hint->setText(QStringLiteral("key '%1' saved to keyring").arg(key.name));
-    appendLog(QStringLiteral("imported key '%1' into keyring").arg(key.name));
+    rebuildKeychainList();
+    if (!passphraseStoreFailed) {
+        m_keysStatus->setText(QStringLiteral("key '%1' saved to the encrypted vault").arg(key.name));
+    }
+    appendLog(QStringLiteral("imported SSH key '%1'").arg(key.name));
+}
+
+void DashboardPage::renameSelectedStoredKey()
+{
+    const int row = m_keysTable ? m_keysTable->currentRow() : -1;
+    if (row < 0 || !m_keysTable->item(row, 0)) return;
+    const QString id = m_keysTable->item(row, 0)->data(Qt::UserRole).toString();
+    StoredKey key;
+    VaultManager vault;
+    if (!vault.retrieveStoredKey(id, key)) {
+        m_keysStatus->setText(QStringLiteral("selected key is missing from the vault"));
+        return;
+    }
+    bool accepted = false;
+    const QString name = QInputDialog::getText(this, QStringLiteral("Rename SSH key"),
+                                                QStringLiteral("Key name:"), QLineEdit::Normal,
+                                                key.name, &accepted).trimmed();
+    if (!accepted || name.isEmpty() || name == key.name) {
+        key.pem.fill('\0');
+        return;
+    }
+    key.name = name;
+    const bool saved = vault.storeStoredKey(key);
+    key.pem.fill('\0');
+    if (!saved) {
+        m_keysStatus->setText(QStringLiteral("failed to rename the key"));
+        return;
+    }
+    reloadKeyringCombo();
+    rebuildKeychainList();
+    m_keysStatus->setText(QStringLiteral("key renamed to '%1'").arg(name));
+}
+
+void DashboardPage::editSelectedStoredKeyPassphrase()
+{
+    const int row = m_keysTable ? m_keysTable->currentRow() : -1;
+    if (row < 0 || !m_keysTable->item(row, 0)) return;
+    const QString id = m_keysTable->item(row, 0)->data(Qt::UserRole).toString();
+    StoredKey key;
+    VaultManager vault;
+    if (!vault.retrieveStoredKey(id, key) || !key.hasPassphrase) {
+        key.pem.fill('\0');
+        m_keysStatus->setText(QStringLiteral("this key does not require a passphrase"));
+        return;
+    }
+
+    bool accepted = false;
+    QString passphrase = QInputDialog::getText(
+        this, QStringLiteral("Stored key passphrase"),
+        QStringLiteral("Enter a passphrase to save, or leave empty to forget the saved passphrase:"),
+        QLineEdit::Password, QString(), &accepted);
+    if (!accepted) {
+        key.pem.fill('\0');
+        return;
+    }
+    if (passphrase.isEmpty()) {
+        key.pem.fill('\0');
+        bool removed = vault.removeStoredKeyPassphrase(id);
+        for (SessionProfile& profile : m_profiles) {
+            if (profile.authMethod == AuthMethod::StoredKey && profile.privateKeyId == id) {
+                profile.keyPassphrase.clear();
+                profile.saveKeyPassphrase = false;
+            }
+        }
+        removed = saveProfiles(m_profiles) && removed;
+        if (removed) {
+            m_keysStatus->setText(QStringLiteral("saved passphrase removed"));
+            rebuildKeychainList();
+        } else {
+            m_keysStatus->setText(QStringLiteral("failed to remove the saved passphrase"));
+        }
+        return;
+    }
+
+    QByteArray passphraseUtf8 = passphrase.toUtf8();
+    passphrase.fill(QChar(u'\0'));
+    ssh_key parsed = nullptr;
+    const int rc = ssh_pki_import_privkey_base64(
+        key.pem.constData(), passphraseUtf8.constData(), nullptr, nullptr, &parsed);
+    key.pem.fill('\0');
+    if (parsed) ssh_key_free(parsed);
+    if (rc != SSH_OK) {
+        wipeBytes(passphraseUtf8);
+        m_keysStatus->setText(QStringLiteral("wrong passphrase"));
+        return;
+    }
+    bool saved = vault.storeStoredKeyPassphrase(id, passphraseUtf8);
+    if (saved) {
+        const QString runtimePassphrase = QString::fromUtf8(passphraseUtf8);
+        for (SessionProfile& profile : m_profiles) {
+            if (profile.authMethod == AuthMethod::StoredKey && profile.privateKeyId == id) {
+                profile.keyPassphrase = runtimePassphrase;
+                profile.saveKeyPassphrase = true;
+            }
+        }
+        saved = saveProfiles(m_profiles);
+    }
+    wipeBytes(passphraseUtf8);
+    m_keysStatus->setText(saved ? QStringLiteral("passphrase saved with this key")
+                               : QStringLiteral("failed to save the passphrase"));
+    if (saved) rebuildKeychainList();
 }
 
 void DashboardPage::removeSelectedKeyringKey()
 {
-    const QString id = m_keyringCombo->currentData().toString();
-    if (id.isEmpty()) {
+    const int row = m_keysTable ? m_keysTable->currentRow() : -1;
+    if (row < 0 || !m_keysTable->item(row, 0)) return;
+    const QString id = m_keysTable->item(row, 0)->data(Qt::UserRole).toString();
+    const QString label = m_keysTable->item(row, 0)->text();
+    QStringList usedBy;
+    for (const SessionProfile& profile : m_profiles) {
+        if (profile.authMethod == AuthMethod::StoredKey && profile.privateKeyId == id) {
+            usedBy.push_back(profile.displayTitle());
+        }
+    }
+    if (!usedBy.isEmpty()) {
+        QMessageBox::warning(this, QStringLiteral("SSH key is in use"),
+                             QStringLiteral("This key is used by: %1. Change those profiles before removing it.")
+                                 .arg(usedBy.join(QStringLiteral(", "))));
         return;
     }
-    const QString label = m_keyringCombo->currentText();
     const auto answer = QMessageBox::question(
         this,
-        QStringLiteral("Remove keyring key"),
-        QStringLiteral("Remove \"%1\" from the keyring?").arg(label));
+        QStringLiteral("Remove SSH key"),
+        QStringLiteral("Permanently remove \"%1\" from the encrypted vault?").arg(label));
     if (answer != QMessageBox::Yes) {
         return;
     }
     VaultManager vault;
-    vault.removeStoredKey(id);
+    if (!vault.removeStoredKey(id)) {
+        m_keysStatus->setText(QStringLiteral("failed to remove the key"));
+        return;
+    }
     reloadKeyringCombo();
-    m_keyringCombo->setCurrentIndex(0);
-    onKeyringSelectionChanged(m_keyringCombo->currentIndex());
-    m_hint->setText(QStringLiteral("key removed from keyring"));
-    appendLog(QStringLiteral("removed keyring key '%1'").arg(label));
+    rebuildKeychainList();
+    m_keysStatus->setText(QStringLiteral("key removed from the vault"));
+    appendLog(QStringLiteral("removed SSH key '%1'").arg(label));
 }
 
 void DashboardPage::showSettings()
@@ -2582,8 +2926,13 @@ void DashboardPage::deleteSavedProfile(const QString& profileId)
         return;
     }
     const QString title = m_profiles[row].displayTitle();
+    const SessionProfile removed = m_profiles[row];
     m_profiles.removeAt(row);
-    saveProfiles(m_profiles);
+    if (!saveProfiles(m_profiles)) {
+        m_profiles.insert(row, removed);
+        m_hint->setText(QStringLiteral("failed to persist profile deletion"));
+        return;
+    }
     if (m_syncSaveDebounce && m_sync && m_sync->state() == SyncController::State::Active
         && !m_sync->isPaused()) {
         m_syncSaveDebounce->start();
@@ -2646,7 +2995,11 @@ void DashboardPage::saveSessionProfile(const SessionProfile& profile)
         saved.keyPassphrase.clear();
     }
     m_profiles.push_back(saved);
-    saveProfiles(m_profiles);
+    if (!saveProfiles(m_profiles)) {
+        m_profiles.removeLast();
+        m_hint->setText(QStringLiteral("failed to save profile secrets"));
+        return;
+    }
     if (m_syncSaveDebounce && m_sync && m_sync->state() == SyncController::State::Active
         && !m_sync->isPaused()) {
         m_syncSaveDebounce->start();
@@ -2689,10 +3042,13 @@ void DashboardPage::rebuildSavedList()
     if (!m_savedTree) {
         return;
     }
+    // Rebuilding and filtering change expansion programmatically; only direct
+    // user actions should update the persisted folder state.
+    const QSignalBlocker rebuildSignals(m_savedTree);
     m_savedTree->clear();
 
     const int baseFontSize = AppSettings::uiFontSize();
-    const int folderFontSize = baseFontSize;
+    const int folderFontSize = qMax(8, baseFontSize - 1);
     const int nameFontSize = qMax(8, baseFontSize - 1);
     const int metadataFontSize = qMax(8, baseFontSize - 2);
     const QColor primaryGray = AppSettings::isLightTheme() ? QColor(0x2a, 0x2a, 0x2a)
@@ -2723,6 +3079,35 @@ void DashboardPage::rebuildSavedList()
         item->setSizeHint(0, QSize(0, QFontMetrics(nameFont).height() + 6));
     };
 
+    QHash<QString, QString> storedKeyNames;
+    {
+        VaultManager vault;
+        for (const StoredKey& key : vault.listStoredKeys()) {
+            storedKeyNames.insert(key.id, key.name.trimmed());
+        }
+    }
+    const auto authLabel = [&storedKeyNames](const SessionProfile& profile) {
+        if (profile.isSerial()) return QStringLiteral("—");
+        if (profile.isTelnet()) return QStringLiteral("Password / prompt");
+        switch (profile.authMethod) {
+        case AuthMethod::SshAgent:
+            return QStringLiteral("SSH Agent");
+        case AuthMethod::StoredKey: {
+            const QString name = storedKeyNames.value(profile.privateKeyId);
+            return name.isEmpty() ? QStringLiteral("Stored key")
+                                  : QStringLiteral("Key · %1").arg(name);
+        }
+        case AuthMethod::KeyFile: {
+            const QString name = QFileInfo(profile.privateKeyPath).fileName();
+            return name.isEmpty() ? QStringLiteral("Key file")
+                                  : QStringLiteral("File · %1").arg(name);
+        }
+        case AuthMethod::Password:
+        default:
+            return QStringLiteral("Password");
+        }
+    };
+
     // Reload tag state from disk (assignments + collapse).
     m_tags = AppSettings::tagDefinitions();
     m_tagAssignments = AppSettings::tagAssignments();
@@ -2733,6 +3118,7 @@ void DashboardPage::rebuildSavedList()
         auto* liveHeader = new QTreeWidgetItem(m_savedTree);
         liveHeader->setText(0, QStringLiteral("Current sessions  (%1)").arg(liveIds.size()));
         liveHeader->setData(0, Qt::UserRole + 1, QStringLiteral("live-header"));
+        liveHeader->setData(0, kHostFolderStateRole, hostLiveFolderKey());
         liveHeader->setFlags(Qt::ItemIsEnabled);
         applyFolderFont(liveHeader);
         liveHeader->setForeground(0, primaryGray);
@@ -2748,15 +3134,7 @@ void DashboardPage::rebuildSavedList()
             child->setData(0, Qt::UserRole + 1, QStringLiteral("live"));
             child->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
             child->setText(1, live->profile.connectionTypeLabel());
-            // The connection type already has its own column; avoid repeating
-            // labels such as "Telnet · connected · Telnet".
-            QString status = live->status;
-            if (live->connected || status.startsWith(QLatin1String("connected"))) {
-                status = QStringLiteral("connected");
-            } else if (status.startsWith(QLatin1String("connecting"))) {
-                status = QStringLiteral("connecting");
-            }
-            child->setText(2, status);
+            child->setText(2, authLabel(live->profile));
             child->setText(3, live->profile.systemLabel());
             applyEntryStyle(child);
 
@@ -2772,7 +3150,7 @@ void DashboardPage::rebuildSavedList()
             });
             m_savedTree->setItemWidget(child, 4, save);
         }
-        liveHeader->setExpanded(true);
+        liveHeader->setExpanded(!m_tagCollapsed.contains(hostLiveFolderKey()));
     }
 
     // Map profileId → tag (first tag that contains it).
@@ -2831,6 +3209,8 @@ void DashboardPage::rebuildSavedList()
                                ? QStringLiteral("%1").arg(s.title)
                                : QStringLiteral("%1  (%2)").arg(s.title).arg(s.profiles.size()));
         header->setData(0, Qt::UserRole, s.tagName);
+        const QString folderKey = hostTagFolderKey(s.tagName);
+        header->setData(0, kHostFolderStateRole, folderKey);
         header->setFlags(Qt::ItemIsEnabled);
         applyFolderFont(header);
         header->setForeground(0, primaryGray);
@@ -2843,16 +3223,7 @@ void DashboardPage::rebuildSavedList()
 
             child->setText(1, p.connectionTypeLabel());
 
-            QString auth = p.isSerial() ? QStringLiteral("—") : QStringLiteral("password");
-            if (!p.isSerial() && p.usesPrivateKey() && p.savePassword) {
-                auth = QStringLiteral("key + pass");
-            } else if (!p.isSerial() && p.usesPrivateKey()) {
-                auth = QStringLiteral("private key");
-            } else if (!p.isSerial() && !p.savePassword) {
-                auth = QStringLiteral("prompt");
-            }
-            child->setText(2, auth);
-
+            child->setText(2, authLabel(p));
             child->setText(3, p.systemLabel());
             applyEntryStyle(child);
 
@@ -2865,7 +3236,9 @@ void DashboardPage::rebuildSavedList()
         }
 
         // Restore collapsed state.
-        const bool collapsed = m_tagCollapsed.contains(s.tagName);
+        // Accept the legacy raw-tag format and migrate it on the next click.
+        const bool collapsed = m_tagCollapsed.contains(folderKey)
+            || m_tagCollapsed.contains(s.tagName);
         header->setExpanded(!collapsed);
     }
 
@@ -2879,6 +3252,7 @@ void DashboardPage::applySavedFilter()
     }
     const QString q = m_searchEdit->text().trimmed();
     int visible = 0;
+    const QSignalBlocker filterSignals(m_savedTree);
 
     for (int i = 0; i < m_savedTree->topLevelItemCount(); ++i) {
         QTreeWidgetItem* header = m_savedTree->topLevelItem(i);
@@ -2927,11 +3301,20 @@ void DashboardPage::applySavedFilter()
         if (headerVisible) {
             anyMatch = childVisible > 0;
         }
-        if (anyMatch && headerVisible) {
-            // Keep header expanded when filtering so matches are visible.
-            if (!q.isEmpty()) {
+        if (!q.isEmpty()) {
+            // Temporarily expand matching folders without overwriting the
+            // expansion state chosen by the user.
+            if (anyMatch && headerVisible) {
                 header->setExpanded(true);
             }
+        } else {
+            const bool liveFolder = header->data(0, Qt::UserRole + 1).toString()
+                == QLatin1String("live-header");
+            const QString folderKey = header->data(0, kHostFolderStateRole).toString();
+            const QString legacyTag = header->data(0, Qt::UserRole).toString();
+            const bool collapsed = m_tagCollapsed.contains(folderKey)
+                || (!liveFolder && m_tagCollapsed.contains(legacyTag));
+            header->setExpanded(!collapsed);
         }
     }
 
@@ -3005,9 +3388,11 @@ void DashboardPage::renameTagDialog(const QString& tagName)
     AppSettings::setTagDefinitions(m_tags);
     m_tagAssignments.insert(trimmed, m_tagAssignments.take(tagName));
     AppSettings::setTagAssignments(m_tagAssignments);
-    if (m_tagCollapsed.contains(tagName)) {
+    const QString oldFolderKey = hostTagFolderKey(tagName);
+    if (m_tagCollapsed.contains(oldFolderKey) || m_tagCollapsed.contains(tagName)) {
+        m_tagCollapsed.removeAll(oldFolderKey);
         m_tagCollapsed.removeAll(tagName);
-        m_tagCollapsed.append(trimmed);
+        m_tagCollapsed.append(hostTagFolderKey(trimmed));
         AppSettings::setTagCollapsed(m_tagCollapsed);
     }
     rebuildSavedList();
@@ -3031,6 +3416,7 @@ void DashboardPage::deleteTag(const QString& tagName)
     AppSettings::setTagDefinitions(m_tags);
     m_tagAssignments.remove(tagName);
     AppSettings::setTagAssignments(m_tagAssignments);
+    m_tagCollapsed.removeAll(hostTagFolderKey(tagName));
     m_tagCollapsed.removeAll(tagName);
     AppSettings::setTagCollapsed(m_tagCollapsed);
     rebuildSavedList();
@@ -3196,68 +3582,93 @@ void DashboardPage::rebuildKeychainList()
     const int metadataFontSize = qMax(8, baseFontSize - 2);
     const QColor metadataColor = AppSettings::isLightTheme() ? QColor(0x5a, 0x5a, 0x5a)
                                                               : QColor(0x8a, 0x8a, 0x8a);
-    int stored = 0;
-    for (const SessionProfile& p : m_profiles) {
-        const bool hasPass = p.savePassword;
-        const bool hasKey = p.usesPrivateKey();
-        if (!hasPass && !hasKey) {
-            continue;
+    const QByteArray agentSocket = qgetenv("SSH_AUTH_SOCK");
+#if defined(Q_OS_WIN)
+    m_agentStatus->setText(agentSocket.isEmpty()
+        ? QStringLiteral("SSH Agent · checked when connecting")
+        : QStringLiteral("SSH Agent · available"));
+#else
+    m_agentStatus->setText(agentSocket.isEmpty()
+        ? QStringLiteral("SSH Agent · unavailable (SSH_AUTH_SOCK is not set)")
+        : QStringLiteral("SSH Agent · available"));
+#endif
+
+    QHash<QString, int> usage;
+    for (const SessionProfile& profile : m_profiles) {
+        if (profile.authMethod == AuthMethod::StoredKey && !profile.privateKeyId.isEmpty()) {
+            usage[profile.privateKeyId] += 1;
         }
-        ++stored;
+    }
+
+    VaultManager vault;
+    const QVector<StoredKey> keys = vault.listStoredKeys();
+    for (const StoredKey& key : keys) {
         const int row = m_keysTable->rowCount();
         m_keysTable->insertRow(row);
 
-        auto* nameItem = new QTableWidgetItem(p.displayTitle());
+        auto* nameItem = new QTableWidgetItem(
+            key.name.trimmed().isEmpty() ? QStringLiteral("(unnamed)") : key.name);
+        nameItem->setData(Qt::UserRole, key.id);
+        nameItem->setData(Qt::UserRole + 1, key.hasPassphrase);
         nameItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         QFont nameFont = nameItem->font();
         nameFont.setPointSize(nameFontSize);
         nameItem->setFont(nameFont);
         nameItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
 
-        auto* passItem = new QTableWidgetItem(hasPass ? QStringLiteral("stored") : QStringLiteral("—"));
-        passItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        auto* typeItem = new QTableWidgetItem(key.type.isEmpty() ? QStringLiteral("—") : key.type);
+        typeItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
         QFont metadataFont = nameFont;
         metadataFont.setPointSize(metadataFontSize);
-        passItem->setFont(metadataFont);
-        passItem->setForeground(metadataColor);
-        passItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        typeItem->setFont(metadataFont);
+        typeItem->setForeground(metadataColor);
 
-        QString keyText = QStringLiteral("—");
-        if (hasKey) {
-            if (!p.privateKeyId.trimmed().isEmpty()) {
-                VaultManager vault;
-                StoredKey stored;
-                if (vault.retrieveStoredKey(p.privateKeyId, stored)) {
-                    keyText = QStringLiteral("%1 (keyring)").arg(
-                        stored.name.trimmed().isEmpty() ? QStringLiteral("stored key") : stored.name);
-                } else {
-                    keyText = QStringLiteral("stored key (missing)");
-                }
-            } else {
-                keyText = QFileInfo(p.privateKeyPath).fileName();
-                if (keyText.isEmpty()) {
-                    keyText = p.privateKeyPath;
-                }
-            }
+        QString fingerprint = key.fingerprint;
+        if (fingerprint.isEmpty()) fingerprint = QStringLiteral("— (legacy key)");
+        if (key.hasPassphrase) {
+            QByteArray savedPassphrase;
+            const bool passphraseSaved = vault.retrieveStoredKeyPassphrase(key.id, savedPassphrase);
+            savedPassphrase.fill('\0');
+            fingerprint += passphraseSaved ? QStringLiteral("  ·  passphrase saved")
+                                           : QStringLiteral("  ·  passphrase required");
         }
-        auto* keyItem = new QTableWidgetItem(keyText);
-        keyItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
-        keyItem->setFont(metadataFont);
-        keyItem->setForeground(metadataColor);
-        keyItem->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        auto* fingerprintItem = new QTableWidgetItem(fingerprint);
+        fingerprintItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        fingerprintItem->setFont(metadataFont);
+        fingerprintItem->setForeground(metadataColor);
+
+        auto* usageItem = new QTableWidgetItem(QString::number(usage.value(key.id)));
+        usageItem->setFlags(Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        usageItem->setFont(metadataFont);
+        usageItem->setForeground(metadataColor);
+        usageItem->setTextAlignment(Qt::AlignCenter);
 
         m_keysTable->setItem(row, 0, nameItem);
-        m_keysTable->setItem(row, 1, passItem);
-        m_keysTable->setItem(row, 2, keyItem);
+        m_keysTable->setItem(row, 1, typeItem);
+        m_keysTable->setItem(row, 2, fingerprintItem);
+        m_keysTable->setItem(row, 3, usageItem);
     }
 
-    if (stored == 0) {
+    if (keys.isEmpty()) {
         m_keysTable->hide();
         m_keysEmpty->show();
     } else {
         m_keysTable->show();
         m_keysEmpty->hide();
     }
+    updateStoredKeyActions();
+}
+
+void DashboardPage::updateStoredKeyActions()
+{
+    const bool selected = m_keysTable && m_keysTable->currentRow() >= 0;
+    if (m_renameKeyBtn) m_renameKeyBtn->setEnabled(selected);
+    if (m_passphraseKeyBtn) {
+        const bool encrypted = selected && m_keysTable->item(m_keysTable->currentRow(), 0)
+            && m_keysTable->item(m_keysTable->currentRow(), 0)->data(Qt::UserRole + 1).toBool();
+        m_passphraseKeyBtn->setEnabled(encrypted);
+    }
+    if (m_removeKeyBtn) m_removeKeyBtn->setEnabled(selected);
 }
 
 void DashboardPage::saveCurrentFormAsProfile()
@@ -3281,7 +3692,7 @@ void DashboardPage::saveCurrentFormAsProfile()
         return;
     }
     if (!serial && method == 1 && m_keyringCombo->currentData().toString().isEmpty()) {
-        m_hint->setText(QStringLiteral("import or select a keyring key"));
+        m_hint->setText(QStringLiteral("import or select a stored SSH key"));
         return;
     }
     if (!serial && method == 2 && m_keyPathEdit->text().trimmed().isEmpty()) {
@@ -3335,7 +3746,11 @@ void DashboardPage::saveCurrentFormAsProfile()
         appendLog(QStringLiteral("saved profile %1").arg(p.displayTitle()));
     }
 
-    saveProfiles(m_profiles);
+    if (!saveProfiles(m_profiles)) {
+        m_hint->setText(QStringLiteral("failed to save profile or its secrets"));
+        appendLog(QStringLiteral("failed to persist profile %1").arg(p.displayTitle()));
+        return;
+    }
     if (m_syncSaveDebounce && m_sync && m_sync->state() == SyncController::State::Active
         && !m_sync->isPaused()) {
         m_syncSaveDebounce->start();
@@ -3368,7 +3783,7 @@ void DashboardPage::connectFromForm()
             return;
         }
         if (method == 1 && m_keyringCombo->currentData().toString().isEmpty()) {
-            m_hint->setText(QStringLiteral("import or select a keyring key"));
+            m_hint->setText(QStringLiteral("import or select a stored SSH key"));
             return;
         }
         if (method == 2 && m_keyPathEdit->text().trimmed().isEmpty()) {

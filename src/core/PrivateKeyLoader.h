@@ -12,7 +12,7 @@
  * Loads the private key that a profile should use for public-key auth, in
  * order of preference:
  *
- *   1. A key pre-saved in the keyring (SessionProfile::privateKeyId) — imported
+ *   1. A key pre-saved in the encrypted vault (SessionProfile::privateKeyId) — imported
  *      straight from the encrypted vault in memory.
  *   2. A filesystem key path (SessionProfile::privateKeyPath).
  *
@@ -29,11 +29,14 @@ inline bool loadProfilePrivateKey(const SessionProfile& profile, ssh_key* keyOut
         VaultManager vault;
         if (!vault.retrieveStoredKey(keyId, stored) || stored.pem.isEmpty()) {
             if (errorOut) {
-                *errorOut = QStringLiteral("stored keyring key \"%1\" is missing").arg(keyId);
+                *errorOut = QStringLiteral("stored SSH key \"%1\" is missing").arg(keyId);
             }
             return false;
         }
-        const QByteArray passphrase = profile.keyPassphrase.toUtf8();
+        QByteArray passphrase = profile.keyPassphrase.toUtf8();
+        if (passphrase.isEmpty() && stored.hasPassphrase) {
+            vault.retrieveStoredKeyPassphrase(keyId, passphrase);
+        }
         const char* passPtr = passphrase.isEmpty() ? nullptr : passphrase.constData();
         ssh_key privkey = nullptr;
         const int rc = ssh_pki_import_privkey_base64(stored.pem.constData(),
@@ -41,6 +44,7 @@ inline bool loadProfilePrivateKey(const SessionProfile& profile, ssh_key* keyOut
                                                      nullptr,
                                                      nullptr,
                                                      &privkey);
+        passphrase.fill('\0');
         // Zero the decrypted payload once imported.
         const std::size_t n = std::size_t(stored.pem.size());
         char* raw = stored.pem.data();
@@ -49,7 +53,7 @@ inline bool loadProfilePrivateKey(const SessionProfile& profile, ssh_key* keyOut
         }
         if (rc != SSH_OK || !privkey) {
             if (errorOut) {
-                *errorOut = QStringLiteral("could not decrypt stored keyring key \"%1\" (wrong passphrase or corrupted)")
+                *errorOut = QStringLiteral("could not decrypt stored SSH key \"%1\" (wrong passphrase or corrupted)")
                                 .arg(stored.name.isEmpty() ? keyId : stored.name);
             }
             return false;
@@ -62,10 +66,11 @@ inline bool loadProfilePrivateKey(const SessionProfile& profile, ssh_key* keyOut
     if (!keyPath.isEmpty()) {
         ssh_key privkey = nullptr;
         const QByteArray path = keyPath.toUtf8();
-        const QByteArray passphrase = profile.keyPassphrase.toUtf8();
+        QByteArray passphrase = profile.keyPassphrase.toUtf8();
         const char* passPtr = passphrase.isEmpty() ? nullptr : passphrase.constData();
-        if (ssh_pki_import_privkey_file(path.constData(), passPtr, nullptr, nullptr, &privkey)
-            != SSH_OK || !privkey) {
+        const int rc = ssh_pki_import_privkey_file(path.constData(), passPtr, nullptr, nullptr, &privkey);
+        passphrase.fill('\0');
+        if (rc != SSH_OK || !privkey) {
             if (errorOut) {
                 *errorOut = QStringLiteral("failed to load private key \"%1\"").arg(keyPath);
             }

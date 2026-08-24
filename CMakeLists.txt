@@ -8,6 +8,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 include(GNUInstallDirs)
+include(CTest)
 
 # ---- Version header -------------------------------------------------------
 # Generates src/version.h (from version.h.in) so the app can display the exact
@@ -215,6 +216,39 @@ target_link_libraries(clientosh PRIVATE
     ${CLIENTOSH_LIBSSH_TARGET}
     ${CLIENTOSH_OPENSSL_TARGET}
 )
+
+if(BUILD_TESTING)
+    add_executable(clientosh_profile_auth_test
+        tests/ProfileAuthTest.cpp
+        src/core/sync/SyncPayload.cpp
+    )
+    target_include_directories(clientosh_profile_auth_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(clientosh_profile_auth_test PRIVATE Qt6::Core)
+    add_test(NAME profile_auth_migration COMMAND clientosh_profile_auth_test)
+
+    add_executable(clientosh_vault_fallback_test
+        tests/VaultFallbackTest.cpp
+        src/core/CryptoEngine.cpp
+        src/core/KeyringAdapter.cpp
+    )
+    target_include_directories(clientosh_vault_fallback_test PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/core
+    )
+    target_link_libraries(clientosh_vault_fallback_test PRIVATE
+        Qt6::Core
+        ${CLIENTOSH_OPENSSL_TARGET}
+    )
+    if(APPLE)
+        target_link_libraries(clientosh_vault_fallback_test PRIVATE
+            "-framework Security" "-framework IOKit" "-framework CoreFoundation")
+    elseif(WIN32)
+        target_link_libraries(clientosh_vault_fallback_test PRIVATE advapi32)
+    endif()
+    add_test(NAME vault_file_fallback COMMAND clientosh_vault_fallback_test)
+endif()
 
 if(APPLE)
     target_link_libraries(clientosh PRIVATE

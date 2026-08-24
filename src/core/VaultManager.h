@@ -13,6 +13,7 @@ struct StoredKey {
     QString id;          // stable identifier referenced by SessionProfile::privateKeyId
     QString name;        // display name the user chose when importing
     QString type;        // key type label (e.g. "ed25519", "rsa") for the keychain view
+    QString fingerprint; // OpenSSH-compatible SHA-256 public-key fingerprint
     QByteArray pem;      // the PEM payload (Base64) — encrypted at rest in the dbvault
     bool hasPassphrase = false; // passphrase required to decrypt/import this key
 };
@@ -83,6 +84,9 @@ public:
     QVector<StoredKey> listStoredKeys();
     /** Remove a stored key; best-effort. */
     bool removeStoredKey(const QString& id);
+    bool storeStoredKeyPassphrase(const QString& id, const QByteArray& passphrase);
+    bool retrieveStoredKeyPassphrase(const QString& id, QByteArray& passphraseOut);
+    bool removeStoredKeyPassphrase(const QString& id);
 
     // ---- diagnostics ---------------------------------------------------------
     /** true if the OS keyring path is active (vs the file-backed fallback). */

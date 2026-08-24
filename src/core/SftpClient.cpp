@@ -273,7 +273,22 @@ bool SftpClient::authenticate(const SessionProfile& profile, QString* errorOut)
     const QString keyPath = profile.privateKeyPath.trimmed();
     const QString keyId = profile.privateKeyId.trimmed();
 
-    if (!keyId.isEmpty() || !keyPath.isEmpty()) {
+    if (profile.authMethod == AuthMethod::SshAgent) {
+        vlog(QStringLiteral("authenticate: trying SSH agent"));
+        emit statusChanged(QStringLiteral("authenticating with SSH agent..."));
+        const int rc = ssh_userauth_agent(session, nullptr);
+        if (rc == SSH_AUTH_SUCCESS) {
+            return true;
+        }
+        if (errorOut) {
+            *errorOut = QStringLiteral("SSH agent authentication failed: %1")
+                            .arg(QString::fromUtf8(ssh_get_error(session)));
+        }
+        return false;
+    }
+
+    if (profile.authMethod == AuthMethod::StoredKey
+        || profile.authMethod == AuthMethod::KeyFile) {
         const QString keyDesc = !keyId.isEmpty() ? keyId : keyPath;
         vlog(QStringLiteral("authenticate: trying private key %1").arg(keyDesc));
         emit statusChanged(QStringLiteral("authenticating with private key..."));
@@ -299,15 +314,16 @@ bool SftpClient::authenticate(const SessionProfile& profile, QString* errorOut)
         }
         const QString pubErr = QString::fromUtf8(ssh_get_error(session));
         vlog(QStringLiteral("authenticate: public-key auth failed rc=%1 err=%2").arg(rc).arg(pubErr));
-        if (profile.password.isEmpty()) {
-            if (errorOut) {
-                *errorOut = QStringLiteral("public-key auth failed for '%1': %2").arg(keyDesc, pubErr);
-            }
-            return false;
+        if (errorOut) {
+            *errorOut = QStringLiteral("public-key auth failed for '%1': %2").arg(keyDesc, pubErr);
         }
-        emit statusChanged(QStringLiteral("key auth failed, trying password..."));
+        return false;
     }
 
+    if (profile.authMethod != AuthMethod::Password) {
+        if (errorOut) *errorOut = QStringLiteral("unsupported authentication method");
+        return false;
+    }
     vlog(QStringLiteral("authenticate: trying password auth for user '%1'").arg(profile.user));
     emit statusChanged(QStringLiteral("authenticating with password..."));
     QString authErr;

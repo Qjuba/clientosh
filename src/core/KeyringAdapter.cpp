@@ -88,8 +88,24 @@ bool writeCred(const QString& fullName, const QByteArray& data)
     CFDictionarySetValue(attrs, kSecAttrAccount, serviceRef);
     CFDictionarySetValue(attrs, kSecValueData, dataRef);
 
-    SecItemDelete(attrs); // overwrite existing
-    const bool ok = SecItemAdd(attrs, nullptr) == errSecSuccess || true;
+    OSStatus status = SecItemAdd(attrs, nullptr);
+    if (status == errSecDuplicateItem) {
+        // Updating in place avoids deleting a valid credential before knowing
+        // whether the replacement can be persisted.
+        CFMutableDictionaryRef query = CFDictionaryCreateMutable(
+            nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        CFDictionarySetValue(query, kSecClass, kSecClassGenericPassword);
+        CFDictionarySetValue(query, kSecAttrService, serviceRef);
+        CFDictionarySetValue(query, kSecAttrAccount, serviceRef);
+
+        CFMutableDictionaryRef update = CFDictionaryCreateMutable(
+            nullptr, 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
+        CFDictionarySetValue(update, kSecValueData, dataRef);
+        status = SecItemUpdate(query, update);
+        CFRelease(update);
+        CFRelease(query);
+    }
+    const bool ok = status == errSecSuccess;
 
     CFRelease(dataRef);
     CFRelease(serviceRef);
@@ -159,9 +175,16 @@ QString KeyringAdapter::fallbackDir()
 
 bool KeyringAdapter::isNativeAvailable()
 {
-    const QString probe = fullNameOf(QStringLiteral("__probe__"));
-    QByteArray out;
-    return storeNative(probe, QByteArray("1")) && retrieveNative(probe, out);
+    // Probe once per process. Repeating Secret Service / Keychain calls every
+    // time a VaultManager is constructed is both slow and can trigger prompts.
+    static const bool available = []() {
+        const QString probe = fullNameOf(QStringLiteral("__probe__"));
+        QByteArray out;
+        const bool ok = storeNative(probe, QByteArray("1")) && retrieveNative(probe, out);
+        removeNative(probe);
+        return ok;
+    }();
+    return available;
 }
 
 bool KeyringAdapter::store(const QString& key, const QByteArray& data)
@@ -226,8 +249,9 @@ bool KeyringAdapter::removeNative(const QString& fullName)
 namespace {
 bool secretToolAvailable()
 {
-    return QProcess::execute(QStringLiteral("secret-tool"),
-                             {QStringLiteral("--version")}) == 0;
+    // `secret-tool` has no portable --version option (some releases print
+    // usage and fail), so executable discovery is the reliable cheap check.
+    return !QStandardPaths::findExecutable(QStringLiteral("secret-tool")).isEmpty();
 }
 } // namespace
 

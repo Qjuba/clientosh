@@ -153,7 +153,8 @@ void SessionManager::connectSession(const QString& id, int cols, int rows)
                          live->profile.password,
                          live->profile.privateKeyPath,
                          live->profile.privateKeyId,
-                         live->profile.keyPassphrase);
+                         live->profile.keyPassphrase,
+                         live->profile.authMethod);
 }
 
 QString SessionManager::openSession(const SessionProfile& profile, int cols, int rows)

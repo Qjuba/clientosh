@@ -144,7 +144,8 @@ void SshSession::connectTo(const QString& host,
                            const QString& password,
                            const QString& privateKeyPath,
                            const QString& privateKeyId,
-                           const QString& keyPassphrase)
+                           const QString& keyPassphrase,
+                           AuthMethod authMethod)
 {
     bool needStart = false;
     {
@@ -156,6 +157,7 @@ void SshSession::connectTo(const QString& host,
         m_privateKeyPath = privateKeyPath;
         m_privateKeyId = privateKeyId;
         m_keyPassphrase = keyPassphrase;
+        m_authMethod = authMethod;
         m_pendingWrite.clear();
         // Keep m_cols/m_rows from resizePty() — do not reset size here.
         m_resizePending = false;
@@ -227,16 +229,30 @@ bool SshSession::authenticate(const QString& password,
                               const QString& privateKeyPath,
                               const QString& privateKeyId,
                               const QString& keyPassphrase,
+                              AuthMethod authMethod,
                               QString* errorOut)
 {
-    const bool usePrivateKey = !privateKeyId.trimmed().isEmpty() || !privateKeyPath.trimmed().isEmpty();
-    if (usePrivateKey) {
+    if (authMethod == AuthMethod::SshAgent) {
+        emit statusChanged(QStringLiteral("authenticating with SSH agent..."));
+        const int rc = ssh_userauth_agent(m_session, nullptr);
+        if (rc == SSH_AUTH_SUCCESS) {
+            return true;
+        }
+        if (errorOut) {
+            *errorOut = QStringLiteral("SSH agent authentication failed: %1")
+                            .arg(QString::fromUtf8(ssh_get_error(m_session)));
+        }
+        return false;
+    }
+
+    if (authMethod == AuthMethod::StoredKey || authMethod == AuthMethod::KeyFile) {
         emit statusChanged(QStringLiteral("authenticating with private key..."));
 
         SessionProfile loaderProfile;
         loaderProfile.privateKeyId = privateKeyId;
         loaderProfile.privateKeyPath = privateKeyPath;
         loaderProfile.keyPassphrase = keyPassphrase;
+        loaderProfile.authMethod = authMethod;
 
         ssh_key privkey = nullptr;
         QString loadErr;
@@ -263,14 +279,11 @@ bool SshSession::authenticate(const QString& password,
             return true;
         }
 
-        if (password.isEmpty()) {
-            if (errorOut) {
-                *errorOut = QStringLiteral("public-key auth failed: %1")
-                                .arg(QString::fromUtf8(ssh_get_error(m_session)));
-            }
-            return false;
+        if (errorOut) {
+            *errorOut = QStringLiteral("public-key auth failed: %1")
+                            .arg(QString::fromUtf8(ssh_get_error(m_session)));
         }
-        emit statusChanged(QStringLiteral("key auth failed, trying password..."));
+        return false;
     }
 
     if (stopRequested()) {
@@ -311,6 +324,7 @@ void SshSession::run()
         QString privateKeyPath;
         QString privateKeyId;
         QString keyPassphrase;
+        AuthMethod authMethod = AuthMethod::Password;
         int port = 22;
         int cols = 80;
         int rows = 24;
@@ -323,6 +337,7 @@ void SshSession::run()
             privateKeyPath = m_privateKeyPath;
             privateKeyId = m_privateKeyId;
             keyPassphrase = m_keyPassphrase;
+            authMethod = m_authMethod;
             port = m_port;
             cols = m_cols;
             rows = m_rows;
@@ -378,7 +393,8 @@ void SshSession::run()
 
         {
             QString authError;
-            if (!authenticate(password, privateKeyPath, privateKeyId, keyPassphrase, &authError)) {
+            if (!authenticate(password, privateKeyPath, privateKeyId, keyPassphrase,
+                              authMethod, &authError)) {
                 const bool cancelled = stopRequested();
                 cleanup();
                 if (!cancelled) {

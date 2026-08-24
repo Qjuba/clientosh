@@ -43,11 +43,6 @@ bool atomicReplace(const QString& tmpPath, const QString& finalPath)
 VaultManager::VaultManager()
 {
     m_usingNative = KeyringAdapter::isNativeAvailable();
-    if (m_usingNative) {
-        // `isNativeAvailable()` leaves a probe entry; keep the keyring clean.
-        KeyringAdapter::removeNative(
-            KeyringAdapter::servicePrefix() + QLatin1String("/__probe__"));
-    }
 }
 
 VaultManager::~VaultManager()
@@ -252,6 +247,9 @@ bool VaultManager::retrieveSecret(const QString& profileId, const QString& field
 
 bool VaultManager::removeSecret(const QString& profileId, const QString& field)
 {
+    if (!ensureDbKey()) {
+        return false;
+    }
     if (!m_dbLoaded && !readDbvault()) {
         return false;
     }
@@ -277,7 +275,7 @@ constexpr const char* kStoredKeysNode = "__stored_keys__";
 
 bool VaultManager::storeStoredKey(const StoredKey& key)
 {
-    if (key.id.isEmpty()) {
+    if (key.id.trimmed().isEmpty() || key.pem.trimmed().isEmpty()) {
         return false;
     }
     if (!ensureDbKey()) {
@@ -290,6 +288,7 @@ bool VaultManager::storeStoredKey(const StoredKey& key)
     QJsonObject entry;
     entry.insert(QStringLiteral("name"), key.name);
     entry.insert(QStringLiteral("type"), key.type);
+    entry.insert(QStringLiteral("fingerprint"), key.fingerprint);
     entry.insert(QStringLiteral("pem"), QString::fromLatin1(key.pem.toBase64()));
     entry.insert(QStringLiteral("hasPassphrase"), key.hasPassphrase);
     keysNode.insert(key.id, entry);
@@ -318,6 +317,7 @@ bool VaultManager::retrieveStoredKey(const QString& id, StoredKey& keyOut)
     keyOut.id = id;
     keyOut.name = entry.value(QStringLiteral("name")).toString();
     keyOut.type = entry.value(QStringLiteral("type")).toString();
+    keyOut.fingerprint = entry.value(QStringLiteral("fingerprint")).toString();
     keyOut.hasPassphrase = entry.value(QStringLiteral("hasPassphrase")).toBool(false);
     keyOut.pem = QByteArray::fromBase64(entry.value(QStringLiteral("pem")).toString().toLatin1());
     if (keyOut.pem.isEmpty()) {
@@ -344,6 +344,7 @@ QVector<StoredKey> VaultManager::listStoredKeys()
         k.id = id;
         k.name = entry.value(QStringLiteral("name")).toString();
         k.type = entry.value(QStringLiteral("type")).toString();
+        k.fingerprint = entry.value(QStringLiteral("fingerprint")).toString();
         k.hasPassphrase = entry.value(QStringLiteral("hasPassphrase")).toBool(false);
         out.push_back(k);
     }
@@ -355,16 +356,18 @@ bool VaultManager::removeStoredKey(const QString& id)
     if (id.isEmpty()) {
         return false;
     }
+    if (!ensureDbKey()) {
+        return false;
+    }
     if (!m_dbLoaded && !readDbvault()) {
-        // Nothing loaded; treat as success since the key cannot be present.
-        return true;
+        return false;
     }
     if (!m_dbvault.contains(QLatin1String(kStoredKeysNode))) {
-        return true;
+        return removeStoredKeyPassphrase(id);
     }
     QJsonObject keysNode = m_dbvault.value(QLatin1String(kStoredKeysNode)).toObject();
     if (!keysNode.contains(id)) {
-        return true;
+        return removeStoredKeyPassphrase(id);
     }
     keysNode.remove(id);
     if (keysNode.isEmpty()) {
@@ -372,5 +375,34 @@ bool VaultManager::removeStoredKey(const QString& id)
     } else {
         m_dbvault.insert(QLatin1String(kStoredKeysNode), keysNode);
     }
-    return persistDbvault();
+    const bool removed = persistDbvault();
+    if (removed) {
+        return removeStoredKeyPassphrase(id);
+    }
+    return false;
+}
+
+namespace {
+QString storedKeySecretId(const QString& id)
+{
+    return QStringLiteral("stored-key/%1").arg(id);
+}
+}
+
+bool VaultManager::storeStoredKeyPassphrase(const QString& id, const QByteArray& passphrase)
+{
+    return !id.trimmed().isEmpty()
+        && storeSecret(storedKeySecretId(id), QStringLiteral("passphrase"), passphrase);
+}
+
+bool VaultManager::retrieveStoredKeyPassphrase(const QString& id, QByteArray& passphraseOut)
+{
+    return !id.trimmed().isEmpty()
+        && retrieveSecret(storedKeySecretId(id), QStringLiteral("passphrase"), passphraseOut);
+}
+
+bool VaultManager::removeStoredKeyPassphrase(const QString& id)
+{
+    return id.trimmed().isEmpty()
+        || removeSecret(storedKeySecretId(id), QStringLiteral("passphrase"));
 }

@@ -125,66 +125,46 @@ bool SftpCrossTransfer::connectSftp(const SessionProfile& profile, void** sessio
 
     const QString keyId = profile.privateKeyId.trimmed();
     const QString keyPath = profile.privateKeyPath.trimmed();
-    const bool hasKey = !keyId.isEmpty() || !keyPath.isEmpty();
-    const bool hasPassword = !profile.password.isEmpty();
+    bool authenticated = false;
 
-    if (!hasKey && !hasPassword) {
-        if (errOut) {
-            *errOut = QStringLiteral("no credentials for %1").arg(profile.host);
+    if (profile.authMethod == AuthMethod::SshAgent) {
+        authenticated = ssh_userauth_agent(session, nullptr) == SSH_AUTH_SUCCESS;
+        if (!authenticated && errOut) {
+            *errOut = QStringLiteral("SSH agent authentication failed for %1: %2")
+                          .arg(profile.host, QString::fromUtf8(ssh_get_error(session)));
         }
-        ssh_disconnect(session);
-        ssh_free(session);
-        return false;
-    }
-
-    bool keySuccess = false;
-    QString keyLoadErr;
-    if (hasKey) {
+    } else if (profile.authMethod == AuthMethod::StoredKey
+               || profile.authMethod == AuthMethod::KeyFile) {
+        QString keyLoadErr;
         ssh_key privkey = nullptr;
         if (loadProfilePrivateKey(profile, &privkey, &keyLoadErr) && privkey) {
             const int rc = ssh_userauth_publickey(session, nullptr, privkey);
             ssh_key_free(privkey);
             if (rc == SSH_AUTH_SUCCESS) {
-                keySuccess = true;
-            } else {
-                const QString e = QString::fromUtf8(ssh_get_error(session));
-                if (!hasPassword) {
-                    if (errOut) {
-                        *errOut = QStringLiteral("key auth failed for %1: %2").arg(profile.host, e);
-                    }
-                    ssh_disconnect(session);
-                    ssh_free(session);
-                    return false;
-                }
-                // fall through to password
+                authenticated = true;
+            } else if (errOut) {
+                *errOut = QStringLiteral("key auth failed for %1: %2")
+                              .arg(profile.host, QString::fromUtf8(ssh_get_error(session)));
             }
-        } else {
-            if (!hasPassword) {
-                if (errOut) {
-                    *errOut = keyLoadErr;
-                }
-                ssh_disconnect(session);
-                ssh_free(session);
-                return false;
-            }
-            // fall through to password
+        } else if (errOut) {
+            *errOut = keyLoadErr;
         }
+    } else if (profile.authMethod == AuthMethod::Password && !profile.password.isEmpty()) {
+        QString authErr;
+        authenticated = sshUserauthPasswordFlexible(session, profile.password, profile.user, &authErr);
+        if (!authenticated && errOut) {
+            *errOut = QStringLiteral("auth failed for %1@%2: %3")
+                          .arg(profile.user, profile.host, authErr);
+        }
+    } else if (errOut) {
+        *errOut = QStringLiteral("no credentials for %1").arg(profile.host);
     }
 
-    if (!keySuccess && hasPassword) {
-        QString authErr;
-        if (!sshUserauthPasswordFlexible(session, profile.password, profile.user, &authErr)) {
-            if (errOut) {
-                *errOut = QStringLiteral("auth failed for %1@%2: %3")
-                              .arg(profile.user, profile.host, authErr);
-            }
-            ssh_disconnect(session);
-            ssh_free(session);
-            return false;
-        }
-    } else if (!keySuccess && !hasPassword) {
+    if (!authenticated) {
         if (errOut) {
-            *errOut = QStringLiteral("no auth method available for %1").arg(profile.host);
+            if (errOut->isEmpty()) {
+                *errOut = QStringLiteral("authentication failed for %1").arg(profile.host);
+            }
         }
         ssh_disconnect(session);
         ssh_free(session);

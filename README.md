@@ -62,7 +62,7 @@
 - **🪶 Lightweight & native** - idles at roughly **~30 MB RAM**, because clientosh is written native against **Qt 6 widgets in C++** - no Electron, no bundled Chromium, no JVM. It launches in a blink and stays out of your memory even with many panes open.
 - **🧱 Split-pane workspace, single window** - drag a session chip onto a live pane to preview the viewport, then drop onto a `Left` / `Right` / `Top` / `Bottom` zone to dock. Terminal **and** SFTP panes share one OS window with animated, eased splitter morphing.
 - **🔒 Layer-0 secure vault** - session metadata and secrets are encrypted at rest with **AES-256-GCM** (OpenSSL EVP), backed by your OS keyring: **Windows Credential Manager, macOS Keychain, and Secret Service (libsecret)** - with a machine-bound encrypted-file fallback that keeps things working headless.
-- **🗝️ Battle-tested private-key auth** - import and save SSH keys *into the keyring itself*, pick them from a dropdown, and decrypt passphrase-protected keys on the fly. Decrypted payloads are **zeroed in memory** after use. Password auth falls back to **keyboard-interactive** when a server disables plain password auth.
+- **🗝️ Central SSH key management** - use your **SSH agent**, import reusable keys into the encrypted vault, or select a key file. Stored keys have OpenSSH-compatible SHA-256 fingerprints, per-key passphrases, and usage protection. Decrypted payloads are **zeroed in memory** after use.
 - **📡 Telnet terminal** - connect to Telnet hosts (port 23) with NAWS resize support, alongside SSH sessions in the same workspace.
 - **🔌 Serial / COM terminal** - connect directly to local serial devices with configurable baud rate, data bits, parity, stop bits, and hardware/software flow control.
 - **⚡ Non-blocking threading model** - SSH auth, shell I/O, SFTP, and live stats all run on **worker threads**; the GUI never freezes on connect or auth.
@@ -98,7 +98,7 @@
 | **UI toolkit** | Qt 6 (`Widgets`, `Network`, `Svg`) |
 | **SSH / SFTP / Telnet / Serial** | libssh 2.x (SSH/SFTP) · native Telnet (Qt Network) · native COM/TTY transport |
 | **Cryptography** | OpenSSL EVP - AES-256-GCM authenticated encryption |
-| **Keyring** | Windows Credential Manager · macOS Keychain · libsecret (dlopen) |
+| **Keyring** | Windows Credential Manager · macOS Keychain · Secret Service (`secret-tool`) |
 | **Build system** | CMake ≥ 3.21 + Ninja / Unix Makefiles / MinGW Makefiles |
 | **Packaging** | CPack (deb/rpm) · Inno Setup · NSIS · dockerized Arch makepkg · AppImage · dmg |
 | **CI / CD** | GitHub Actions (matrix: Ubuntu, macOS, Windows-MSYS2), release on `v*` tags |
@@ -290,7 +290,7 @@ When clientosh is already running, subsequent SSH/Telnet/serial commands add ano
 
 ### 2. Connect
 
-Authenticate with a **password** or a **private key**. Pick a pre-saved key straight from the keyring dropdown, or point to a key on disk (optionally passphrase-protected). If the server rejects plain password auth, clientosh automatically retries via **keyboard-interactive**.
+Choose one explicit authentication method: **SSH agent**, a key from **SSH Keys**, a private-key file, or a password. Methods do not silently fall back to one another. Password authentication may use keyboard-interactive when the server disables plain password auth.
 
 ### 3. Split panes
 
@@ -415,7 +415,8 @@ For Telnet, username is optional (you can type credentials manually in the termi
 | `-P`, `--port` | Port (overrides `:port` in target) |
 | `-p`, `--password` | Password for this session only (not saved) |
 | `-i`, `--identity` | Private key file path |
-| `--keyring` | Saved keyring key id |
+| `--agent` | Authenticate using SSH agent |
+| `--stored-key`, `--keyring` | Stored SSH key id (`--keyring` is the legacy alias) |
 | `--key-passphrase` | Passphrase for an encrypted private key |
 | `--sftp` | With `ssh`, also open an SFTP pane |
 | `--baud` | Serial baud rate (default: 115200) |

@@ -64,7 +64,17 @@ bool ServerStatsClient::authenticate(const SessionProfile& profile, QString* err
     const QString keyPath = profile.privateKeyPath.trimmed();
     const QString keyId = profile.privateKeyId.trimmed();
 
-    if (!keyId.isEmpty() || !keyPath.isEmpty()) {
+    if (profile.authMethod == AuthMethod::SshAgent) {
+        if (ssh_userauth_agent(session, nullptr) == SSH_AUTH_SUCCESS) return true;
+        if (errorOut) {
+            *errorOut = QStringLiteral("SSH agent authentication failed: %1")
+                            .arg(QString::fromUtf8(ssh_get_error(session)));
+        }
+        return false;
+    }
+
+    if (profile.authMethod == AuthMethod::StoredKey
+        || profile.authMethod == AuthMethod::KeyFile) {
         ssh_key privkey = nullptr;
         QString loadErr;
         if (!loadProfilePrivateKey(profile, &privkey, &loadErr)) {
@@ -78,16 +88,14 @@ bool ServerStatsClient::authenticate(const SessionProfile& profile, QString* err
         if (rc == SSH_AUTH_SUCCESS) {
             return true;
         }
-        if (profile.password.isEmpty()) {
-            if (errorOut) {
-                *errorOut = QStringLiteral("key auth failed: %1")
-                                .arg(QString::fromUtf8(ssh_get_error(session)));
-            }
-            return false;
+        if (errorOut) {
+            *errorOut = QStringLiteral("key auth failed: %1")
+                            .arg(QString::fromUtf8(ssh_get_error(session)));
         }
+        return false;
     }
 
-    if (profile.password.isEmpty() && keyId.isEmpty() && keyPath.isEmpty()) {
+    if (profile.authMethod != AuthMethod::Password || profile.password.isEmpty()) {
         if (errorOut) {
             *errorOut = QStringLiteral("no credentials for stats probe");
         }

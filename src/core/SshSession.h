@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SessionProfile.h"
+
 #include <QThread>
 #include <QMutex>
 #include <QByteArray>
@@ -28,7 +30,8 @@ public:
                    const QString& password,
                    const QString& privateKeyPath = {},
                    const QString& privateKeyId = {},
-                   const QString& keyPassphrase = {});
+                   const QString& keyPassphrase = {},
+                   AuthMethod authMethod = AuthMethod::Password);
     void disconnectFromHost();
     void sendData(const QByteArray& data);
     void resizePty(int cols, int rows);
@@ -54,6 +57,7 @@ private:
                       const QString& privateKeyPath,
                       const QString& privateKeyId,
                       const QString& keyPassphrase,
+                      AuthMethod authMethod,
                       QString* errorOut);
 
     mutable QMutex m_mutex;
@@ -64,6 +68,7 @@ private:
     QString m_privateKeyPath;
     QString m_privateKeyId;
     QString m_keyPassphrase;
+    AuthMethod m_authMethod = AuthMethod::Password;
     int m_port = 22;
     int m_cols = 80;
     int m_rows = 24;

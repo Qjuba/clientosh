@@ -1,4 +1,5 @@
 #include "TerminalWidget.h"
+
 #include "PlatformFonts.h"
 #include "core/AppSettings.h"
 
@@ -2468,6 +2469,9 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
             R"(^\s*(?:[A-Za-z0-9_.-]+(?:\([^)]+\))?[>#]\s*)?no\s+ip\s+icmp\s+rate-limit\s+unreachable\s*$)"),
         QRegularExpression::CaseInsensitiveOption);
     const bool suppressUnreachableFault = neutralUnreachableCommand.match(line).hasMatch();
+    static const QRegularExpression neutralParityDisabled(
+        QStringLiteral(R"(\bparity\s+disabled\b)"), QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch parityDisabledMatch = neutralParityDisabled.match(line);
 
     enum class RuleGroup { Address, Keyword, Cisco };
     struct Rule {
@@ -2507,7 +2511,7 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
              QStringLiteral(R"(^\s*[A-Za-z0-9_.-]+(?:\([^)]+\))?[>#])")),
          QColor(0xe5, 0xc0, 0x7b), 24, RuleGroup::Cisco},
         {QRegularExpression(
-             QStringLiteral(R"(\b(?:(?:GigabitEthernet|FastEthernet|TenGigabitEthernet|TwentyFiveGigE|FortyGigabitEthernet|HundredGigE|Ethernet|Port-channel|Loopback|Vlan|Tunnel|Serial)|(?:Gi|Fa|Te|Twe|Fo|Hu|Eth|Po|Lo|Vl|Tu|Se))\d+(?:[/.:-]\d+)*\b)"),
+             QStringLiteral(R"(\b(?:(?:GigabitEthernet|FastEthernet|TenGigabitEthernet|TwentyFiveGigE|FortyGigabitEthernet|HundredGigE|Ethernet|Port-channel|Loopback|Vlan|Tunnel|Serial)|(?:Gi|G|Fa|Te|Twe|Fo|Hu|Eth|Po|Lo|L|Vl|Tu|Se))\d+(?:[/.:-]\d+)*\b)"),
              QRegularExpression::CaseInsensitiveOption),
          QColor(0x56, 0xb6, 0xc2), 38, RuleGroup::Cisco},
         // Cisco's dotted MAC notation (0011.2233.4455).
@@ -2555,6 +2559,12 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
             const QRegularExpressionMatch m = it.next();
             if (suppressUnreachableFault
                 && m.captured().compare(QLatin1String("unreachable"), Qt::CaseInsensitive) == 0) {
+                continue;
+            }
+            if (parityDisabledMatch.hasMatch()
+                && m.captured().compare(QLatin1String("disabled"), Qt::CaseInsensitive) == 0
+                && m.capturedStart() >= parityDisabledMatch.capturedStart()
+                && m.capturedEnd() <= parityDisabledMatch.capturedEnd()) {
                 continue;
             }
             const int a = m.capturedStart();

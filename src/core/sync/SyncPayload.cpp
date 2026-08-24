@@ -20,6 +20,7 @@ QJsonObject profileToJsonFull(const SessionProfile& p)
     o.insert(QStringLiteral("savePassword"), p.savePassword);
     o.insert(QStringLiteral("privateKeyPath"), p.privateKeyPath);
     o.insert(QStringLiteral("privateKeyId"), p.privateKeyId);
+    o.insert(QStringLiteral("authMethod"), authMethodToString(p.authMethod));
     o.insert(QStringLiteral("keyPassphrase"), p.keyPassphrase);
     o.insert(QStringLiteral("saveKeyPassphrase"), p.saveKeyPassphrase);
     const QString mode = connectionModeToString(p.connectionMode);
@@ -45,6 +46,8 @@ SessionProfile profileFromJsonFull(const QJsonObject& o)
     p.savePassword = o.value(QStringLiteral("savePassword")).toBool(false);
     p.privateKeyPath = o.value(QStringLiteral("privateKeyPath")).toString();
     p.privateKeyId = o.value(QStringLiteral("privateKeyId")).toString();
+    p.authMethod = authMethodFromString(o.value(QStringLiteral("authMethod")).toString(),
+                                        p.privateKeyId, p.privateKeyPath);
     p.keyPassphrase = o.value(QStringLiteral("keyPassphrase")).toString();
     p.saveKeyPassphrase = o.value(QStringLiteral("saveKeyPassphrase")).toBool(false);
     const QString mode = o.value(QStringLiteral("connectionMode")).toString();
@@ -58,6 +61,7 @@ SessionProfile profileFromJsonFull(const QJsonObject& o)
     p.serialParity = o.value(QStringLiteral("serialParity")).toString(QStringLiteral("none"));
     p.serialStopBits = o.value(QStringLiteral("serialStopBits")).toInt(1);
     p.serialFlowControl = o.value(QStringLiteral("serialFlowControl")).toString(QStringLiteral("none"));
+    p.normalizeAuthentication();
     if (p.id.isEmpty()) {
         p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
     }
@@ -70,6 +74,7 @@ QJsonObject keyToJsonFull(const StoredKey& k)
     o.insert(QStringLiteral("id"), k.id);
     o.insert(QStringLiteral("name"), k.name);
     o.insert(QStringLiteral("type"), k.type);
+    o.insert(QStringLiteral("fingerprint"), k.fingerprint);
     o.insert(QStringLiteral("pem"), QString::fromLatin1(k.pem.toBase64()));
     o.insert(QStringLiteral("hasPassphrase"), k.hasPassphrase);
     return o;
@@ -81,6 +86,7 @@ StoredKey keyFromJsonFull(const QJsonObject& o)
     k.id = o.value(QStringLiteral("id")).toString();
     k.name = o.value(QStringLiteral("name")).toString();
     k.type = o.value(QStringLiteral("type")).toString();
+    k.fingerprint = o.value(QStringLiteral("fingerprint")).toString();
     const QByteArray pemB64 = o.value(QStringLiteral("pem")).toString().toLatin1();
     k.pem = QByteArray::fromBase64(pemB64);
     k.hasPassphrase = o.value(QStringLiteral("hasPassphrase")).toBool(false);

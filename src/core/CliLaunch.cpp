@@ -208,9 +208,12 @@ void configureParser(QCommandLineParser& parser)
         QStringLiteral("Private key file path."),
         QStringLiteral("path")));
     parser.addOption(QCommandLineOption(
-        QStringLiteral("keyring"),
-        QStringLiteral("Saved keyring key id."),
+        {QStringLiteral("stored-key"), QStringLiteral("keyring")},
+        QStringLiteral("Stored SSH key id (--keyring is kept for compatibility)."),
         QStringLiteral("id")));
+    parser.addOption(QCommandLineOption(
+        QStringLiteral("agent"),
+        QStringLiteral("Authenticate using SSH agent.")));
     parser.addOption(QCommandLineOption(
         QStringLiteral("key-passphrase"),
         QStringLiteral("Passphrase for an encrypted private key."),
@@ -304,14 +307,28 @@ Request parse(const QCommandLineParser& parser)
         profile.name = parser.value(QStringLiteral("name")).trimmed();
     }
 
+    const int authOptions = int(parser.isSet(QStringLiteral("password")))
+        + int(parser.isSet(QStringLiteral("identity")))
+        + int(parser.isSet(QStringLiteral("keyring")))
+        + int(parser.isSet(QStringLiteral("agent")));
+    if (authOptions > 1) {
+        req.error = QStringLiteral("choose only one authentication option: --password, --identity, --stored-key, or --agent");
+        return req;
+    }
     if (parser.isSet(QStringLiteral("password"))) {
         profile.password = parser.value(QStringLiteral("password"));
+        profile.authMethod = AuthMethod::Password;
     }
     if (parser.isSet(QStringLiteral("identity"))) {
         profile.privateKeyPath = parser.value(QStringLiteral("identity")).trimmed();
+        profile.authMethod = AuthMethod::KeyFile;
     }
     if (parser.isSet(QStringLiteral("keyring"))) {
         profile.privateKeyId = parser.value(QStringLiteral("keyring")).trimmed();
+        profile.authMethod = AuthMethod::StoredKey;
+    }
+    if (parser.isSet(QStringLiteral("agent"))) {
+        profile.authMethod = AuthMethod::SshAgent;
     }
     if (parser.isSet(QStringLiteral("key-passphrase"))) {
         profile.keyPassphrase = parser.value(QStringLiteral("key-passphrase"));

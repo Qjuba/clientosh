@@ -9,6 +9,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QSettings>
+#include <QSet>
 #include <QUuid>
 #include <QMetaType>
 
@@ -18,6 +19,50 @@ enum class ConnectionMode {
     Telnet = 2,   // raw telnet terminal (no SFTP)
     Serial = 3    // local serial/COM terminal
 };
+
+enum class AuthMethod {
+    Password = 0,
+    StoredKey = 1,
+    KeyFile = 2,
+    SshAgent = 3
+};
+
+inline QString authMethodToString(AuthMethod method)
+{
+    switch (method) {
+    case AuthMethod::StoredKey: return QStringLiteral("storedKey");
+    case AuthMethod::KeyFile: return QStringLiteral("keyFile");
+    case AuthMethod::SshAgent: return QStringLiteral("sshAgent");
+    case AuthMethod::Password:
+    default: return QStringLiteral("password");
+    }
+}
+
+inline AuthMethod authMethodFromString(const QString& value,
+                                       const QString& legacyKeyId = {},
+                                       const QString& legacyKeyPath = {})
+{
+    if (value.compare(QLatin1String("storedKey"), Qt::CaseInsensitive) == 0
+        || value.compare(QLatin1String("keyring"), Qt::CaseInsensitive) == 0) {
+        return AuthMethod::StoredKey;
+    }
+    if (value.compare(QLatin1String("keyFile"), Qt::CaseInsensitive) == 0
+        || value.compare(QLatin1String("file"), Qt::CaseInsensitive) == 0) {
+        return AuthMethod::KeyFile;
+    }
+    if (value.compare(QLatin1String("sshAgent"), Qt::CaseInsensitive) == 0
+        || value.compare(QLatin1String("agent"), Qt::CaseInsensitive) == 0) {
+        return AuthMethod::SshAgent;
+    }
+    if (value.compare(QLatin1String("password"), Qt::CaseInsensitive) == 0) {
+        return AuthMethod::Password;
+    }
+    // Profiles created before authMethod existed inferred the method from the
+    // presence of a key reference.
+    if (!legacyKeyId.trimmed().isEmpty()) return AuthMethod::StoredKey;
+    if (!legacyKeyPath.trimmed().isEmpty()) return AuthMethod::KeyFile;
+    return AuthMethod::Password;
+}
 
 struct SessionProfile {
     QString id;
@@ -31,6 +76,7 @@ struct SessionProfile {
     QString privateKeyId;   // if set, use a key pre-saved in the keyring (overrides path)
     QString keyPassphrase;  // for encrypted keys (not persisted by default)
     bool saveKeyPassphrase = false;
+    AuthMethod authMethod = AuthMethod::Password;
     ConnectionMode connectionMode = ConnectionMode::Ssh;
     int serialBaudRate = 115200;
     int serialDataBits = 8;
@@ -41,7 +87,40 @@ struct SessionProfile {
 
     bool usesPrivateKey() const
     {
-        return !privateKeyId.trimmed().isEmpty() || !privateKeyPath.trimmed().isEmpty();
+        return authMethod == AuthMethod::StoredKey || authMethod == AuthMethod::KeyFile;
+    }
+
+    bool usesSshAgent() const { return authMethod == AuthMethod::SshAgent; }
+
+    void normalizeAuthentication()
+    {
+        switch (authMethod) {
+        case AuthMethod::StoredKey:
+            privateKeyPath.clear();
+            password.clear();
+            savePassword = false;
+            break;
+        case AuthMethod::KeyFile:
+            privateKeyId.clear();
+            password.clear();
+            savePassword = false;
+            break;
+        case AuthMethod::SshAgent:
+            privateKeyId.clear();
+            privateKeyPath.clear();
+            password.clear();
+            savePassword = false;
+            keyPassphrase.clear();
+            saveKeyPassphrase = false;
+            break;
+        case AuthMethod::Password:
+        default:
+            privateKeyId.clear();
+            privateKeyPath.clear();
+            keyPassphrase.clear();
+            saveKeyPassphrase = false;
+            break;
+        }
     }
 
     /** "—" placeholder when the OS has not been detected yet. */
@@ -156,6 +235,8 @@ inline QVector<SessionProfile> profilesFromQSettingsStore(QSettings& s)
         }
         p.privateKeyPath = s.value(QStringLiteral("privateKeyPath")).toString();
         p.privateKeyId = s.value(QStringLiteral("privateKeyId")).toString();
+        p.authMethod = authMethodFromString(s.value(QStringLiteral("authMethod")).toString(),
+                                            p.privateKeyId, p.privateKeyPath);
         p.saveKeyPassphrase = s.value(QStringLiteral("saveKeyPassphrase"), false).toBool();
         if (p.saveKeyPassphrase) {
             p.keyPassphrase = s.value(QStringLiteral("keyPassphrase")).toString();
@@ -170,6 +251,7 @@ inline QVector<SessionProfile> profilesFromQSettingsStore(QSettings& s)
         if (p.id.isEmpty()) {
             p.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
         }
+        p.normalizeAuthentication();
         out.push_back(p);
     }
     s.endArray();
@@ -231,6 +313,7 @@ inline QJsonObject profileToJson(const SessionProfile& p)
     o.insert(QStringLiteral("savePassword"), p.savePassword);
     o.insert(QStringLiteral("privateKeyPath"), p.privateKeyPath);
     o.insert(QStringLiteral("privateKeyId"), p.privateKeyId);
+    o.insert(QStringLiteral("authMethod"), authMethodToString(p.authMethod));
     o.insert(QStringLiteral("saveKeyPassphrase"), p.saveKeyPassphrase);
     o.insert(QStringLiteral("connectionMode"), connectionModeToString(p.connectionMode));
     o.insert(QStringLiteral("system"), p.system);
@@ -253,6 +336,8 @@ inline SessionProfile profileFromJson(const QJsonObject& o)
     p.savePassword = o.value(QStringLiteral("savePassword")).toBool(false);
     p.privateKeyPath = o.value(QStringLiteral("privateKeyPath")).toString();
     p.privateKeyId = o.value(QStringLiteral("privateKeyId")).toString();
+    p.authMethod = authMethodFromString(o.value(QStringLiteral("authMethod")).toString(),
+                                        p.privateKeyId, p.privateKeyPath);
     p.saveKeyPassphrase = o.value(QStringLiteral("saveKeyPassphrase")).toBool(false);
     p.connectionMode = connectionModeFromString(
         o.value(QStringLiteral("connectionMode")).toString(QStringLiteral("ssh")));
@@ -262,13 +347,14 @@ inline SessionProfile profileFromJson(const QJsonObject& o)
     p.serialParity = o.value(QStringLiteral("serialParity")).toString(QStringLiteral("none"));
     p.serialStopBits = o.value(QStringLiteral("serialStopBits")).toInt(1);
     p.serialFlowControl = o.value(QStringLiteral("serialFlowControl")).toString(QStringLiteral("none"));
+    p.normalizeAuthentication();
     // Leave empty ids empty here — loadProfiles() assigns and persists once.
     return p;
 }
 
 } // namespace VaultPrivate
 
-inline void saveProfiles(const QVector<SessionProfile>& profiles)
+inline bool saveProfiles(const QVector<SessionProfile>& profiles)
 {
     // 1) Persist non-sensitive metadata to the encrypted connects.json.
     QJsonArray arr;
@@ -276,26 +362,56 @@ inline void saveProfiles(const QVector<SessionProfile>& profiles)
         arr.append(VaultPrivate::profileToJson(p));
     }
     QJsonObject root;
-    root.insert(QStringLiteral("version"), 1);
+    root.insert(QStringLiteral("version"), 2);
     root.insert(QStringLiteral("profiles"), arr);
     const QByteArray plain = QJsonDocument(root).toJson(QJsonDocument::Compact);
 
     VaultManager vault;
-    vault.saveConnectsJson(plain);
+    bool ok = vault.saveConnectsJson(plain);
 
     // 2) Store/remove sensitive fields in the keyring-protected dbvault.
+    QSet<QString> storedKeyIds;
     for (const SessionProfile& p : profiles) {
         if (p.savePassword) {
-            vault.storeSecret(p.id, QStringLiteral("password"), p.password.toUtf8());
+            QByteArray password = p.password.toUtf8();
+            ok = vault.storeSecret(p.id, QStringLiteral("password"), password) && ok;
+            password.fill('\0');
         } else {
-            vault.removeSecret(p.id, QStringLiteral("password"));
+            ok = vault.removeSecret(p.id, QStringLiteral("password")) && ok;
         }
-        if (p.saveKeyPassphrase) {
-            vault.storeSecret(p.id, QStringLiteral("keyPassphrase"), p.keyPassphrase.toUtf8());
+
+        if (p.authMethod == AuthMethod::StoredKey && !p.privateKeyId.trimmed().isEmpty()) {
+            storedKeyIds.insert(p.privateKeyId);
+            // Remove the old per-profile copy after migration.
+            ok = vault.removeSecret(p.id, QStringLiteral("keyPassphrase")) && ok;
+        } else if (p.authMethod == AuthMethod::KeyFile && p.saveKeyPassphrase) {
+            QByteArray passphrase = p.keyPassphrase.toUtf8();
+            ok = vault.storeSecret(p.id, QStringLiteral("keyPassphrase"), passphrase) && ok;
+            passphrase.fill('\0');
         } else {
-            vault.removeSecret(p.id, QStringLiteral("keyPassphrase"));
+            ok = vault.removeSecret(p.id, QStringLiteral("keyPassphrase")) && ok;
         }
     }
+    for (const QString& id : storedKeyIds) {
+        const SessionProfile* owner = nullptr;
+        for (const SessionProfile& profile : profiles) {
+            if (profile.authMethod == AuthMethod::StoredKey
+                && profile.privateKeyId == id
+                && profile.saveKeyPassphrase
+                && !profile.keyPassphrase.isEmpty()) {
+                owner = &profile;
+                break;
+            }
+        }
+        if (owner) {
+            QByteArray passphrase = owner->keyPassphrase.toUtf8();
+            ok = vault.storeStoredKeyPassphrase(id, passphrase) && ok;
+            passphrase.fill('\0');
+        } else {
+            ok = vault.removeStoredKeyPassphrase(id) && ok;
+        }
+    }
+    return ok;
 }
 
 inline QVector<SessionProfile> loadProfiles()
@@ -326,6 +442,7 @@ inline QVector<SessionProfile> loadProfiles()
     QVector<SessionProfile> out;
     out.reserve(arr.size());
     bool generatedIds = false;
+    bool migratedKeyPassphrases = false;
     for (const QJsonValue& v : arr) {
         SessionProfile p = VaultPrivate::profileFromJson(v.toObject());
         if (p.id.isEmpty()) {
@@ -338,10 +455,22 @@ inline QVector<SessionProfile> loadProfiles()
             p.password = QString::fromUtf8(secret);
             secret.fill('\0');
         }
-        if (p.saveKeyPassphrase
-            && vault.retrieveSecret(p.id, QStringLiteral("keyPassphrase"), secret)) {
-            p.keyPassphrase = QString::fromUtf8(secret);
-            secret.fill('\0');
+        if (p.saveKeyPassphrase) {
+            bool found = false;
+            if (p.authMethod == AuthMethod::StoredKey) {
+                found = vault.retrieveStoredKeyPassphrase(p.privateKeyId, secret);
+                if (!found && vault.retrieveSecret(p.id, QStringLiteral("keyPassphrase"), secret)) {
+                    const bool migrated = vault.storeStoredKeyPassphrase(p.privateKeyId, secret);
+                    migratedKeyPassphrases = migrated || migratedKeyPassphrases;
+                    found = true; // The legacy secret is still usable for this launch.
+                }
+            } else if (p.authMethod == AuthMethod::KeyFile) {
+                found = vault.retrieveSecret(p.id, QStringLiteral("keyPassphrase"), secret);
+            }
+            if (found) {
+                p.keyPassphrase = QString::fromUtf8(secret);
+                secret.fill('\0');
+            }
         }
         out.push_back(p);
     }
@@ -372,7 +501,7 @@ inline QVector<SessionProfile> loadProfiles()
                     mergedSecrets = true;
                 }
             }
-            if (mergedSecrets || generatedIds) {
+            if (mergedSecrets || generatedIds || migratedKeyPassphrases) {
                 saveProfiles(out);
                 generatedIds = false;
             }
@@ -380,7 +509,7 @@ inline QVector<SessionProfile> loadProfiles()
         } else {
             // No legacy profiles, but scrub any stray plaintext secret keys.
             wipeLegacyQSettingsProfiles();
-            if (generatedIds) {
+            if (generatedIds || migratedKeyPassphrases) {
                 saveProfiles(out);
             }
         }

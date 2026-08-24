@@ -139,6 +139,16 @@ bool argvHasVersion(int argc, char* argv[])
     return false;
 }
 
+bool argvHasRemovedNameOption(int argc, char* argv[])
+{
+    for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "-name") == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 namespace CliLaunch {
@@ -154,22 +164,18 @@ void addStandardOptions(QCommandLineParser& parser)
 
 void configureParser(QCommandLineParser& parser)
 {
-    // Keep compatibility with the documented `-name title` spelling. Without
-    // this mode Qt treats `-name` as short option `-n` with the value `ame`.
-    parser.setSingleDashWordOptionMode(QCommandLineParser::ParseAsLongOptions);
-
     parser.setApplicationDescription(
         QStringLiteral(
             "clientosh - SSH, SFTP, Telnet, and serial client\n"
             "\n"
             "Quick connect:\n"
-            "  clientosh telnet 192.168.0.1:23 -name Router\n"
-            "  clientosh ssh user@prod.example.com -name Production\n"
-            "  clientosh ssh 10.0.0.5:2222 -u admin -name Jump\n"
-            "  clientosh sftp deploy@files.example.com -name Deploy\n"
+            "  clientosh telnet 192.168.0.1:23 --name Router\n"
+            "  clientosh ssh user@prod.example.com --name Production\n"
+            "  clientosh ssh 10.0.0.5:2222 -u admin --name Jump\n"
+            "  clientosh sftp deploy@files.example.com --name Deploy\n"
             "  clientosh ssh host -i ~/.ssh/id_ed25519 -u root --sftp\n"
-            "  clientosh serial COM3 --baud 115200 -name Console\n"
-            "  clientosh serial /dev/ttyUSB0 --baud 9600 -name Console\n"
+            "  clientosh serial COM3 --baud 115200 --name Console\n"
+            "  clientosh serial /dev/ttyUSB0 --baud 9600 --name Console\n"
             "\n"
             "Target: host, host:port, user@host, user@host:port, or a serial device\n"
             "Run without a command to open the dashboard."));
@@ -237,7 +243,7 @@ Request parse(const QCommandLineParser& parser)
     req.launch = true;
 
     if (pos.size() < 2) {
-        req.error = QStringLiteral("missing target (example: clientosh telnet 192.168.0.1:23 -name Router)");
+        req.error = QStringLiteral("missing target (example: clientosh telnet 192.168.0.1:23 --name Router)");
         return req;
     }
 
@@ -369,6 +375,11 @@ int runHeadlessPhase(int argc, char* argv[], Request* outRequest, bool* outLaunc
     if (wantVersion) {
         clientoshCliWrite(QStringLiteral("clientosh %1\n").arg(QStringLiteral(CLIENTOSH_VERSION)));
         return 0;
+    }
+    if (argvHasRemovedNameOption(argc, argv)) {
+        clientoshCliWrite(
+            QStringLiteral("clientosh: unknown option '-name' (use '-n' or '--name')\n"));
+        return 1;
     }
 
     const QStringList args = core.arguments();

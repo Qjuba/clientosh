@@ -117,6 +117,7 @@ TerminalWidget::TerminalWidget(QWidget* parent)
     m_vScroll = new QScrollBar(Qt::Vertical, this);
     m_vScroll->setObjectName(QStringLiteral("termScrollBar"));
     m_vScroll->setFocusPolicy(Qt::NoFocus);
+    m_vScroll->setCursor(Qt::ArrowCursor);
     m_vScroll->hide();
     connect(m_vScroll, &QScrollBar::valueChanged, this, [this](int value) {
         if (m_updatingScrollBar) {
@@ -2456,6 +2457,12 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
         return colors;
     }
 
+    static const QRegularExpression neutralUnreachableCommand(
+        QStringLiteral(
+            R"(^\s*(?:[A-Za-z0-9_.-]+(?:\([^)]+\))?[>#]\s*)?no\s+ip\s+icmp\s+rate-limit\s+unreachable\s*$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const bool suppressUnreachableFault = neutralUnreachableCommand.match(line).hasMatch();
+
     enum class RuleGroup { Address, Keyword, Cisco };
     struct Rule {
         QRegularExpression re;
@@ -2516,7 +2523,7 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
              QRegularExpression::CaseInsensitiveOption),
          QColor(0xe5, 0xc0, 0x7b), 32, RuleGroup::Cisco},
         {QRegularExpression(
-             QStringLiteral(R"(\b(?:administratively\s+down|err-?disabled|notconnect|inactive|disabled|shutdown|down|failed|failure|timeout|CRC|input\s+errors?|output\s+errors?|runts?|giants?|overruns?|ignored|resets?|lost\s+carrier|no\s+carrier|late\s+collisions?|collisions?|drops?|dropped|discards?|discarded|denied?|unreachable|flapping)\b)"),
+             QStringLiteral(R"(\b(?:administratively\s+down|err-?disabled|notconnect|inactive|disabled|shutdown|down|failed|failure|timed\s+out|timeout\s+(?:while\s+)?waiting\s+for|CRC|input\s+errors?|output\s+errors?|runts?|giants?|overruns?|ignored|resets?|lost\s+carrier|no\s+carrier|late\s+collisions?|collisions?|drops?|dropped|discards?|discarded|denied?|unreachable|flapping)\b)"),
              QRegularExpression::CaseInsensitiveOption),
          QColor(0xf4, 0x47, 0x47), 55, RuleGroup::Cisco},
         // IOS syslog mnemonic with severity 0-3 = urgent/critical/error.
@@ -2540,6 +2547,10 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
         auto it = rule.re.globalMatch(line);
         while (it.hasNext()) {
             const QRegularExpressionMatch m = it.next();
+            if (suppressUnreachableFault
+                && m.captured().compare(QLatin1String("unreachable"), Qt::CaseInsensitive) == 0) {
+                continue;
+            }
             const int a = m.capturedStart();
             const int b = m.capturedEnd(); // exclusive
             if (a < 0 || b <= a) {
@@ -2962,11 +2973,6 @@ void TerminalWidget::keyPressEvent(QKeyEvent* event)
 bool TerminalWidget::event(QEvent* event)
 {
     if (m_interactive) {
-        // Claim keys before Qt application/window shortcuts can steal them
-        if (event->type() == QEvent::ShortcutOverride) {
-            event->accept();
-            return true;
-        }
         // Tab/Backtab are normally eaten for focus chaining before keyPressEvent
         if (event->type() == QEvent::KeyPress) {
             auto* ke = static_cast<QKeyEvent*>(event);

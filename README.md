@@ -274,13 +274,13 @@ From the dashboard, create an **SSH** (terminal + SFTP), **Telnet** (terminal on
 
 Open connections also appear under **Hosts → Current sessions**. Use the `+` action there, or right-click a session tab and choose **Save connection profile**, to keep an ad-hoc session as a reusable host.
 
-You can also open an ad-hoc terminal session directly from the command line. The tab name is optional; both `-name` and `--name` are accepted:
+You can also open an ad-hoc terminal session directly from the command line. The tab name is optional; both `-n` and `--name` are accepted:
 
 ```bash
-/usr/bin/clientosh telnet 192.0.2.10:23 -name router
-/usr/bin/clientosh ssh 192.0.2.20:22 -name server
-/usr/bin/clientosh serial COM3 --baud 115200 -name console
-/usr/bin/clientosh serial /dev/ttyUSB0 --baud 9600 -name console
+/usr/bin/clientosh telnet 192.0.2.10:23 --name router
+/usr/bin/clientosh ssh 192.0.2.20:22 --name server
+/usr/bin/clientosh serial COM3 --baud 115200 --name console
+/usr/bin/clientosh serial /dev/ttyUSB0 --baud 9600 --name console
 ```
 
 If the endpoint matches a saved profile of the same type, its credentials and key settings are reused. Otherwise SSH uses the default username configured in clientosh settings.
@@ -373,36 +373,36 @@ On Windows, run from **PowerShell** or **cmd** (for example `.\build\clientosh.e
 
 ```bash
 # Telnet
-clientosh telnet 192.168.0.1:23 -name Router
-clientosh telnet switch.local -u admin -name Core-SW
+clientosh telnet 192.168.0.1:23 --name Router
+clientosh telnet switch.local -u admin --name Core-SW
 
 # SSH
-clientosh ssh user@prod.example.com -name Production
-clientosh ssh 10.0.0.5:2222 -u admin -name Jump
-clientosh ssh host -i ~/.ssh/id_ed25519 -u root -name Root
-clientosh ssh user@host -p secret -name Lab
+clientosh ssh user@prod.example.com --name Production
+clientosh ssh 10.0.0.5:2222 -u admin --name Jump
+clientosh ssh host -i ~/.ssh/id_ed25519 -u root --name Root
+clientosh ssh user@host -p secret --name Lab
 
 # SSH + SFTP pane at once
-clientosh ssh deploy@files.example.com --sftp -name Deploy
+clientosh ssh deploy@files.example.com --sftp --name Deploy
 
 # SFTP only
-clientosh sftp user@files.example.com -name Files
-clientosh sftp backup.local:2222 -u backup -name Backups
+clientosh sftp user@files.example.com --name Files
+clientosh sftp backup.local:2222 -u backup --name Backups
 
 # Serial / COM
-clientosh serial COM3 --baud 115200 -name Console
-clientosh serial /dev/ttyUSB0 --baud 9600 -name Console
+clientosh serial COM3 --baud 115200 --name Console
+clientosh serial /dev/ttyUSB0 --baud 9600 --name Console
 
 # Windows (path to built binary)
-.\build\clientosh.exe telnet 192.168.0.1:23 -name Router
-.\build\clientosh.exe ssh user@10.0.0.5 -name Prod
+.\build\clientosh.exe telnet 192.168.0.1:23 --name Router
+.\build\clientosh.exe ssh user@10.0.0.5 --name Prod
 
 # Linux / macOS (installed binary)
-clientosh telnet router.lan:23 -name Router
-/usr/bin/clientosh ssh user@prod.example.com -name Production
+clientosh telnet router.lan:23 --name Router
+/usr/bin/clientosh ssh user@prod.example.com --name Production
 ```
 
-Connect commands open the **GUI** and start the session in a new tab. Use `-name` / `-n` to set the tab title. Passwords from `-p` / `--password` are used for this session only and are **not** saved to the vault.
+Connect commands open the **GUI** and start the session in a new tab. Use `-n` / `--name` to set the tab title. Passwords from `-p` / `--password` are used for this session only and are **not** saved to the vault.
 
 For Telnet, username is optional (you can type credentials manually in the terminal). Serial sessions do not use authentication. For SSH and SFTP, provide `user@host` or `-u` / `--user`.
 
@@ -410,7 +410,7 @@ For Telnet, username is optional (you can type credentials manually in the termi
 
 | Option | Description |
 |---|---|
-| `-n`, `-name`, `--name` | Tab / pane title |
+| `-n`, `--name` | Tab / pane title |
 | `-u`, `--user` | Username (overrides `user@` in target) |
 | `-P`, `--port` | Port (overrides `:port` in target) |
 | `-p`, `--password` | Password for this session only (not saved) |

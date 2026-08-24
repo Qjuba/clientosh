@@ -5,446 +5,69 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing v* tag to build and publish
+        required: true
+        type: string
 
 permissions:
+  actions: read
   contents: write
 
-env:
-  REF_NAME: ${{ github.ref_name }}
-
 jobs:
-  # ---------------------------------------------------------------------------
-  # Windows: Inno Setup .exe installer + portable .zip
-  # ---------------------------------------------------------------------------
-  build-windows:
-    name: Windows (Inno installer .exe + portable .zip)
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: actions/checkout@v4
+  build:
+    name: Build all release packages
+    uses: ./.github/workflows/build-packages.yml
+    with:
+      source_ref: ${{ inputs.tag || github.ref }}
+      package_label: ${{ inputs.tag || github.ref_name }}
 
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup -y --no-progress
-
-      - name: Install MSYS2 deps
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            git
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-libssh
-            mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-ntldd
-            mingw-w64-x86_64-nsis
-            p7zip
-
-      # Build against the exact Qt version used locally (C:\Qt\6.9.2\mingw_64).
-      # The MSYS2 rolling Qt (mingw-w64-x86_64-qt6-*) tracks the newest Qt, which
-      # renders/looks and behaves differently from the pinned local kit. Installing
-      # Qt 6.9.2 plus its matching MinGW 13.1.0 toolchain via aqtinstall makes the
-      # CI build byte-for-byte the same Qt/Kits the app was developed and tested on.
-      - name: Install pinned Qt 6.9.2 + MinGW 13.1
-        shell: pwsh
-        run: |
-          $QtRoot = Join-Path $env:RUNNER_TEMP 'Qt'
-          python -m pip install --upgrade aqtinstall
-          python -m aqt install-qt windows desktop 6.9.2 win64_mingw -O $QtRoot
-          python -m aqt install-tool windows desktop tools_mingw1310 qt.tools.win64_mingw1310 -O $QtRoot
-          $qtPrefix = "$QtRoot\6.9.2\mingw_64"
-          $mingwRoot = "$QtRoot\Tools\mingw1310_64"
-          "QT_ROOT=$qtPrefix"           >> $env:GITHUB_ENV
-          "QT_BIN_DIR=$qtPrefix\bin"    >> $env:GITHUB_ENV
-          "MINGW_ROOT=$mingwRoot"       >> $env:GITHUB_ENV
-          Get-ChildItem $mingwRoot\bin\g++.exe, $qtPrefix\bin\windeployqt.exe | Select-Object FullName
-
-      - name: Configure
-        run: |
-          # Pass Windows-absolute compiler paths (with the .exe extension). CMake
-          # does NOT auto-append ".exe" to a full compiler path, and a bare
-          # "bin/g++" against an "aqt-isolated" MinGW fails the compiler check.
-          cmake -S . -B build-win -G "Ninja" -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$QT_ROOT" \
-            -DCMAKE_C_COMPILER="$MINGW_ROOT/bin/gcc.exe" \
-            -DCMAKE_CXX_COMPILER="$MINGW_ROOT/bin/g++.exe"
-
-      - name: Build
-        run: cmake --build build-win -j 4
-
-      - name: Copy DLL dependency closure next to the exe
-        run: |
-          # Resolve every DLL referenced by the exe (Qt, libssh, OpenSSL, MinGW
-          # runtime, and Qt's transitive deps such as libdouble-conversion.dll)
-          # and copy it beside the exe. Hardcoding the list missed those
-          # transitive deps, so the installer failed to launch on a clean
-          # system. ntldd -R walks the full closure.
-          ntldd -R build-win/clientosh.exe \
-            | sed 's/\\/\//g' \
-            | grep -oiE '[^ ]+mingw64/bin/[^ ]+\.dll' \
-            | sed -E 's#^.*mingw64/bin/#/mingw64/bin/#' \
-            | sort -u \
-            | while read -r dll; do
-                if [ -f "$dll" ]; then
-                  cp "$dll" build-win/
-                fi
-              done
-          ls -la build-win/*.dll
-
-      - name: Deploy Qt runtime (DLLs + plugins)
-        run: |
-          "$QT_BIN_DIR/windeployqt" --no-translations --release build-win/clientosh.exe || true
-
-      - name: Build Inno Setup installer (.exe)
-        run: |
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" build-win/installer/clientosh_installer.iss
-          ls -la clientosh-*-win64-setup.exe
-
-      - name: Locate installer filename
-        # Locate the actual .exe produced by ISCC instead of guessing its name
-        # from REF_NAME. The Inno template names the output after CMake's version
-        # (clientosh-<VERSION>-win64-setup.exe, no "v" prefix), which may differ
-        # from the git tag. Finding the real file keeps the upload correct either way.
-        id: setup
-        run: |
-          file=$(ls clientosh-*-win64-setup.exe 2>/dev/null | grep -i setup | head -n 1)
-          echo "path=$file" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
-
-      - name: Build portable .zip
-        run: |
-          # PowerShell Compress-Archive is always present on Windows runners,
-          # so we don't depend on a 7-Zip MSYS2 package name.
-          powershell -NoProfile -Command "Compress-Archive -Path 'build-win/*' -DestinationPath 'clientosh-${REF_NAME}-win64-portable.zip' -Force"
-          ls -la clientosh-${REF_NAME}-win64-portable.zip
-
-      - name: Upload Inno installer
-        if: steps.setup.outputs.path != ''
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ steps.setup.outputs.path }}
-          tag: ${{ github.ref }}
-          asset_name: ${{ steps.setup.outputs.name }}
-          overwrite: true
-
-      - name: Upload portable .zip
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh-${{ env.REF_NAME }}-win64-portable.zip
-          tag: ${{ github.ref }}
-          overwrite: true
-
-      - name: Upload build artifacts (for checksums job)
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-assets
-          path: |
-            clientosh-*-win64-setup.exe
-            clientosh-${{ env.REF_NAME }}-win64-portable.zip
-          if-no-files-found: ignore
-
-  # ---------------------------------------------------------------------------
-  # Linux: .deb + portable .tar.gz + .AppImage
-  # ---------------------------------------------------------------------------
-  build-linux:
-    name: Linux (.deb + .tar.gz + .AppImage)
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config dpkg-dev \
-            rpm \
-            qt6-base-dev libqt6svg6-dev libssh-dev libssl-dev \
-            libgl1-mesa-dev libegl1-mesa-dev \
-            imagemagick libfuse2 file
-
-      - name: Configure
-        run: cmake -S . -B build-deb -DCMAKE_BUILD_TYPE=Release \
-                 -DCMAKE_INSTALL_PREFIX=/usr
-
-      - name: Build
-        run: cmake --build build-deb -j "$(nproc)"
-
-      - name: Package .deb
-        run: cmake --build build-deb --target package
-
-      - name: Locate .deb
-        id: deb
-        run: |
-          file=$(find build-deb -maxdepth 1 -name '*.deb' -print -quit)
-          echo "path=$file" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
-
-      - name: Locate .rpm
-        id: rpm
-        run: |
-          file=$(find build-deb -maxdepth 1 -name '*.rpm' -print -quit)
-          echo "path=$file" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
-
-      - name: Build portable .tar.gz
-        run: |
-          cmake --install build-deb --prefix stage/usr
-          tar -C stage -czf clientosh-${REF_NAME}-linux.tar.gz usr
-
-      - name: Download linuxdeploy tooling
-        run: |
-          curl -sL -o linuxdeploy.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy.AppImage
-          curl -sL -o linuxdeploy-plugin-qt.AppImage \
-            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
-          chmod +x linuxdeploy-plugin-qt.AppImage
-
-      - name: Build .AppImage
-        continue-on-error: true
-        run: |
-          set -e
-          mkdir -p AppDir-clientosh/usr/bin \
-                   AppDir-clientosh/usr/share/applications \
-                   AppDir-clientosh/usr/share/icons/hicolor/256x256/apps
-          cp build-deb/clientosh AppDir-clientosh/usr/bin/clientosh
-          cp packaging/clientosh.desktop AppDir-clientosh/usr/share/applications/clientosh.desktop
-          if convert icons/terminal.svg \
-                AppDir-clientosh/usr/share/icons/hicolor/256x256/apps/clientosh.png; then
-            :
-          elif [ -f icon.png ]; then
-            cp icon.png AppDir-clientosh/usr/share/icons/hicolor/256x256/apps/clientosh.png
-          fi
-
-          export LDAI_OUTPUT_DIR="$PWD"
-          export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
-          export QTDIR="/usr/lib/x86_64-linux-gnu"
-
-          ./linuxdeploy.AppImage --appimage-extract-and-run \
-              --appdir AppDir-clientosh \
-              --desktop-file packaging/clientosh.desktop \
-              --icon-file AppDir-clientosh/usr/share/icons/hicolor/256x256/apps/clientosh.png \
-              --plugin qt \
-              --output appimage 2>&1 | tail -80 || true
-          ls -la *.AppImage || true
-
-      - name: Upload .deb
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ steps.deb.outputs.path }}
-          tag: ${{ github.ref }}
-          asset_name: ${{ steps.deb.outputs.name }}
-          overwrite: true
-
-      - name: Upload .rpm
-        if: steps.rpm.outputs.path != ''
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ steps.rpm.outputs.path }}
-          tag: ${{ github.ref }}
-          asset_name: ${{ steps.rpm.outputs.name }}
-          overwrite: true
-
-      - name: Upload .tar.gz
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh-${{ env.REF_NAME }}-linux.tar.gz
-          tag: ${{ github.ref }}
-          overwrite: true
-
-      - name: Upload .AppImage
-        if: hashFiles('clientosh-*.AppImage') != ''
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh-*.AppImage
-          tag: ${{ github.ref }}
-          overwrite: true
-
-      - name: Upload build artifacts (for checksums job)
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-assets
-          path: |
-            build-deb/*.deb
-            build-deb/*.rpm
-            clientosh-${{ env.REF_NAME }}-linux.tar.gz
-            clientosh-*.AppImage
-          if-no-files-found: ignore
-
-  # ---------------------------------------------------------------------------
-  # Arch Linux: .pkg.tar.zst (built with makepkg inside an Arch container)
-  # ---------------------------------------------------------------------------
-  build-arch:
-    name: Arch (.pkg.tar.zst)
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Build Arch package with makepkg
-        run: |
-          set -e
-          docker run --interactive --rm --privileged \
-            -v "$GITHUB_WORKSPACE":/work \
-            -w /work/packaging/arch \
-            archlinux/archlinux:base-devel \
-          bash -e <<'EOF'
-            pacman -Sy --noconfirm --needed \
-              qt6-base qt6-svg libssh openssl cmake ninja pkgconf
-            # makepkg refuses to run as root; build as a dedicated user.
-            useradd -m builder
-            chown -R builder:builder /work
-            runuser -u builder -- makepkg -sf --noconfirm
-          EOF
-
-      - name: Locate Arch .pkg.tar.zst
-        id: arch
-        run: |
-          file=$(find packaging/arch -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)
-          echo "path=$file" >> "$GITHUB_OUTPUT"
-          echo "name=$(basename "$file")" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Arch package to release
-        if: steps.arch.outputs.path != ''
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: ${{ steps.arch.outputs.path }}
-          tag: ${{ github.ref }}
-          asset_name: ${{ steps.arch.outputs.name }}
-          overwrite: true
-
-      - name: Upload Arch package artifact
-        if: steps.arch.outputs.path != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-arch
-          path: ${{ steps.arch.outputs.path }}
-          if-no-files-found: ignore
-
-  # ---------------------------------------------------------------------------
-  # macOS: .dmg
-  # ---------------------------------------------------------------------------
-  build-macos:
-    name: macOS (.dmg)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install deps
-        run: |
-          brew update
-          brew install qt libssh openssl@3
-
-      - name: Configure
-        run: cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
-        run: cmake --build build-macos -j "$(sysctl -n hw.ncpu)"
-
-      - name: Assemble .app bundle
-        run: |
-          APP=build-macos/clientosh.app
-          mkdir -p "$APP/Contents/MacOS"
-          cp build-macos/clientosh "$APP/Contents/MacOS/clientosh"
-          cat > "$APP/Contents/Info.plist" <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleName</key><string>clientosh</string>
-            <key>CFBundleDisplayName</key><string>clientosh</string>
-            <key>CFBundleIdentifier</key><string>io.github.clientosh</string>
-            <key>CFBundleExecutable</key><string>clientosh</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>1.0.6</string>
-            <key>CFBundleVersion</key><string>1.0.6</string>
-            <key>LSMinimumSystemVersion</key><string>12.0</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
-          EOF
-
-      - name: Deploy Qt frameworks
-        continue-on-error: true
-        run: |
-          macdeployqt build-macos/clientosh.app -always-overwrite 2>&1 | tail -40 || true
-          codesign --force --deep --sign - build-macos/clientosh.app 2>/dev/null || true
-
-      - name: Build .dmg
-        continue-on-error: true
-        run: |
-          hdiutil create -volname clientosh -srcfolder build-macos/clientosh.app \
-                 -ov -format UDZO clientosh-${REF_NAME}-macos.dmg 2>&1 | tail -20 || true
-          ls -la clientosh*macos* || true
-
-      - name: Upload .dmg
-        if: hashFiles(format('clientosh-{0}-macos.dmg', env.REF_NAME)) != ''
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh-${{ env.REF_NAME }}-macos.dmg
-          tag: ${{ github.ref }}
-          overwrite: true
-
-      - name: Zip .app as fallback
-        if: hashFiles('clientosh*macos*.dmg') == ''
-        run: |
-          zip -qry clientosh-${{ env.REF_NAME }}-macos.zip build-macos/clientosh.app || true
-
-      - name: Upload .app zip fallback
-        if: hashFiles(format('clientosh-{0}-macos.dmg', env.REF_NAME)) == ''
-        uses: svenstaro/upload-release-action@v2
-        with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: clientosh-${{ env.REF_NAME }}-macos.zip
-          tag: ${{ github.ref }}
-          overwrite: true
-
-      - name: Upload build artifact (for checksums job)
-        uses: actions/upload-artifact@v4
-        with:
-          name: macos-assets
-          path: |
-            clientosh*macos*.dmg
-            clientosh-${{ env.REF_NAME }}-macos.zip
-          if-no-files-found: ignore
-
-  # ---------------------------------------------------------------------------
-  # Release: generate checksums for all assets
-  # ---------------------------------------------------------------------------
-  checksums:
-    name: Generate checksums
+  publish:
+    name: Publish stable release
+    needs: build
     runs-on: ubuntu-latest
-    needs: [build-windows, build-linux, build-arch, build-macos]
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      - name: Download all installer artifacts
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - name: Download all packages
         uses: actions/download-artifact@v4
         with:
-          path: artifacts
+          path: dist
           merge-multiple: true
 
-      - name: Generate CHECKSUMS.txt
-        continue-on-error: true
+      - name: Verify packages and generate checksums
         run: |
-          ls -la artifacts || true
-          (cd artifacts && sha256sum *) > CHECKSUMS.txt || true
-          cat CHECKSUMS.txt || true
+          test -f "dist/clientosh-${RELEASE_TAG}-win64-setup.exe"
+          test -f "dist/clientosh-${RELEASE_TAG}-win64-portable.zip"
+          test -f "dist/clientosh-${RELEASE_TAG}-amd64.deb"
+          test -f "dist/clientosh-${RELEASE_TAG}-x86_64.rpm"
+          test -f "dist/clientosh-${RELEASE_TAG}-x86_64.AppImage"
+          test -f "dist/clientosh-${RELEASE_TAG}-linux-x86_64.tar.gz"
+          test -f "dist/clientosh-${RELEASE_TAG}-x86_64.pkg.tar.zst"
+          test -f "dist/clientosh-${RELEASE_TAG}-macos.dmg"
+          (cd dist && sha256sum clientosh-* > CHECKSUMS.txt)
 
-      - name: Upload CHECKSUMS.txt to release
-        if: hashFiles('CHECKSUMS.txt') != ''
-        uses: svenstaro/upload-release-action@v2
+      - name: Prepare shared release description
+        run: |
+          {
+            echo "Build from tag \`${RELEASE_TAG}\`."
+            echo
+            cat .github/release-assets.md
+          } > RELEASE_BODY.md
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
         with:
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          file: CHECKSUMS.txt
-          tag: ${{ github.ref }}
-          overwrite: true
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: clientosh ${{ env.RELEASE_TAG }}
+          prerelease: false
+          files: dist/*
+          body_path: RELEASE_BODY.md
+          overwrite_files: true
+          generate_release_notes: false
+          make_latest: true

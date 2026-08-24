@@ -6,6 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
@@ -13,150 +14,55 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Windows: Inno Setup installer (.exe)
-  # ---------------------------------------------------------------------------
-  build-windows:
-    name: Windows (Inno installer)
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: msys2 {0}
-    steps:
-      - uses: actions/checkout@v4
+  build:
+    name: Build all beta packages
+    uses: ./.github/workflows/build-packages.yml
+    with:
+      source_ref: ${{ github.sha }}
+      package_label: beta
 
-      - name: Install Inno Setup
-        shell: pwsh
-        run: choco install innosetup -y --no-progress
-
-      - name: Install MSYS2 deps
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: MINGW64
-          update: true
-          install: >-
-            git
-            mingw-w64-x86_64-gcc
-            mingw-w64-x86_64-cmake
-            mingw-w64-x86_64-ninja
-            mingw-w64-x86_64-libssh
-            mingw-w64-x86_64-openssl
-            mingw-w64-x86_64-ntldd
-
-      - name: Install pinned Qt 6.9.2 + MinGW 13.1
-        shell: pwsh
-        run: |
-          $QtRoot = Join-Path $env:RUNNER_TEMP 'Qt'
-          python -m pip install --upgrade aqtinstall
-          python -m aqt install-qt windows desktop 6.9.2 win64_mingw -O $QtRoot
-          python -m aqt install-tool windows desktop tools_mingw1310 qt.tools.win64_mingw1310 -O $QtRoot
-          $qtPrefix = "$QtRoot\6.9.2\mingw_64"
-          $mingwRoot = "$QtRoot\Tools\mingw1310_64"
-          "QT_ROOT=$qtPrefix"           >> $env:GITHUB_ENV
-          "QT_BIN_DIR=$qtPrefix\bin"    >> $env:GITHUB_ENV
-          "MINGW_ROOT=$mingwRoot"       >> $env:GITHUB_ENV
-
-      - name: Configure
-        run: |
-          cmake -S . -B build-win -G "Ninja" -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_PREFIX_PATH="$QT_ROOT" \
-            -DCMAKE_C_COMPILER="$MINGW_ROOT/bin/gcc.exe" \
-            -DCMAKE_CXX_COMPILER="$MINGW_ROOT/bin/g++.exe"
-
-      - name: Build
-        run: cmake --build build-win -j 4
-
-      - name: Copy DLL dependency closure next to the exe
-        run: |
-          ntldd -R build-win/clientosh.exe \
-            | sed 's/\\/\//g' \
-            | grep -oiE '[^ ]+mingw64/bin/[^ ]+\.dll' \
-            | sed -E 's#^.*mingw64/bin/#/mingw64/bin/#' \
-            | sort -u \
-            | while read -r dll; do
-                if [ -f "$dll" ]; then
-                  cp "$dll" build-win/
-                fi
-              done
-
-      - name: Deploy Qt runtime (DLLs + plugins)
-        run: |
-          "$QT_BIN_DIR/windeployqt" --no-translations --release build-win/clientosh.exe || true
-
-      - name: Build Inno Setup installer (.exe)
-        run: |
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" build-win/installer/clientosh_installer.iss
-
-      - name: Prepare beta installer filename
-        run: |
-          file=$(ls clientosh-*-win64-setup.exe 2>/dev/null | head -n 1)
-          cp "$file" clientosh-beta-win64-setup.exe
-          ls -la clientosh-beta-win64-setup.exe
-
-      - name: Upload Windows beta artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-beta
-          path: clientosh-beta-win64-setup.exe
-
-  # ---------------------------------------------------------------------------
-  # Linux: .deb
-  # ---------------------------------------------------------------------------
-  build-linux:
-    name: Linux (.deb)
-    runs-on: ubuntu-22.04
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential cmake pkg-config dpkg-dev \
-            qt6-base-dev libqt6svg6-dev libssh-dev libssl-dev \
-            libgl1-mesa-dev libegl1-mesa-dev
-
-      - name: Configure
-        run: cmake -S . -B build-deb -DCMAKE_BUILD_TYPE=Release \
-                 -DCMAKE_INSTALL_PREFIX=/usr
-
-      - name: Build
-        run: cmake --build build-deb -j "$(nproc)"
-
-      - name: Package .deb
-        run: cmake --build build-deb --target package
-
-      - name: Prepare beta .deb filename
-        run: |
-          file=$(find build-deb -maxdepth 1 -name '*.deb' -print -quit)
-          cp "$file" clientosh-beta-amd64.deb
-          ls -la clientosh-beta-amd64.deb
-
-      - name: Upload Linux beta artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: linux-beta
-          path: clientosh-beta-amd64.deb
-
-  # ---------------------------------------------------------------------------
-  # Publish rolling beta release (tag: beta)
-  # ---------------------------------------------------------------------------
-  publish-beta:
-    name: Publish beta release
-    needs: [build-windows, build-linux]
+  publish:
+    name: Publish rolling beta
+    needs: build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Download all packages
+        uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
-      - name: Verify beta artifacts
+      - name: Verify packages and generate checksums
         run: |
-          ls -la dist/
           test -f dist/clientosh-beta-win64-setup.exe
+          test -f dist/clientosh-beta-win64-portable.zip
           test -f dist/clientosh-beta-amd64.deb
+          test -f dist/clientosh-beta-x86_64.rpm
+          test -f dist/clientosh-beta-x86_64.AppImage
+          test -f dist/clientosh-beta-linux-x86_64.tar.gz
+          test -f dist/clientosh-beta-x86_64.pkg.tar.zst
+          test -f dist/clientosh-beta-macos.dmg
           (cd dist && sha256sum clientosh-beta-* > CHECKSUMS-beta.txt)
-          cat dist/CHECKSUMS-beta.txt
+
+      - name: Prepare shared release description
+        run: |
+          {
+            echo "Automated beta build from commit [\`${GITHUB_SHA}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA})."
+            echo
+            echo "This prerelease is replaced after every successful build from \`main\`."
+            echo
+            cat .github/release-assets.md
+          } > RELEASE_BODY.md
+
+      - name: Move rolling beta tag
+        run: |
+          git tag --force beta "$GITHUB_SHA"
+          git push origin refs/tags/beta --force
 
       - name: Publish GitHub prerelease
         uses: softprops/action-gh-release@v2
@@ -164,19 +70,8 @@ jobs:
           tag_name: beta
           name: Beta (latest main)
           prerelease: true
-          target_commitish: ${{ github.sha }}
-          files: |
-            dist/clientosh-beta-win64-setup.exe
-            dist/clientosh-beta-amd64.deb
-            dist/CHECKSUMS-beta.txt
-          body: |
-            Automated beta build from [`${{ github.sha }}`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}).
-
-            | File | Platform |
-            |------|----------|
-            | `clientosh-beta-win64-setup.exe` | Windows 64-bit installer |
-            | `clientosh-beta-amd64.deb` | Debian / Ubuntu 64-bit |
-
-            Stable releases: [Releases](${{ github.server_url }}/${{ github.repository }}/releases).
+          files: dist/*
+          body_path: RELEASE_BODY.md
+          overwrite_files: true
           generate_release_notes: false
           make_latest: false

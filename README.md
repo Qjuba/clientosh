@@ -487,7 +487,7 @@ Contributions are welcome! Please:
 3. Keep builds clean on **Linux, macOS, and Windows**.
 4. Open a **pull request** against `main`.
 
-The **CI** workflow builds and smoke-tests the project on Ubuntu, macOS, and Windows (MSYS2) for every push and PR. The **Beta** workflow publishes a rolling Windows installer and `.deb` on every push to `main` (see [Download beta versions](#-download-beta-versions) below). The **Release** workflow produces `.deb`, `.rpm`, `.AppImage`, `.tar.gz`, `.pkg.tar.zst`, Windows installers, and a macOS `.dmg` whenever you push a `v*` tag - plus a `CHECKSUMS.txt`.
+The **CI** workflow builds and smoke-tests the project on Ubuntu, macOS, and Windows (MSYS2) for every push and PR. The **Beta** and **Release** workflows use the same packaging pipeline for Windows, Linux, Arch Linux, and macOS. Every push to `main` replaces the rolling beta, while a `v*` tag creates a stable release - each with checksums.
 
 > 🔐 **Security note:** host-key checking is intentionally disabled to keep the local client raw and friction-free. Prefer running clientosh on **trusted networks** until key verification (the top roadmap item) lands.
 
@@ -504,7 +504,13 @@ Pre-release builds from the latest commit on `main`. The [beta release](https://
 | Platform | Download |
 |---|---|
 | **Windows** (64-bit installer) | [clientosh-beta-win64-setup.exe](https://github.com/hdmain/clientosh/releases/download/beta/clientosh-beta-win64-setup.exe) |
+| **Windows** (64-bit portable) | [clientosh-beta-win64-portable.zip](https://github.com/hdmain/clientosh/releases/download/beta/clientosh-beta-win64-portable.zip) |
 | **Linux** (Debian / Ubuntu `.deb`) | [clientosh-beta-amd64.deb](https://github.com/hdmain/clientosh/releases/download/beta/clientosh-beta-amd64.deb) |
+| **Linux** (Fedora / RHEL / openSUSE `.rpm`) | [clientosh-beta-x86_64.rpm](https://github.com/hdmain/clientosh/releases/download/beta/clientosh-beta-x86_64.rpm) |
+| **Linux** (`.AppImage`) | [clientosh-beta-x86_64.AppImage](https://github.com/hdmain/clientosh/releases/download/beta/clientosh-beta-x86_64.AppImage) |
+| **Linux** (portable `.tar.gz`) | [clientosh-beta-linux-x86_64.tar.gz](https://github.com/hdmain/clientosh/releases/download/beta/clientosh-beta-linux-x86_64.tar.gz) |
+| **Arch Linux** (`.pkg.tar.zst`) | [clientosh-beta-x86_64.pkg.tar.zst](https://github.com/hdmain/clientosh/releases/download/beta/clientosh-beta-x86_64.pkg.tar.zst) |
+| **macOS** (`.dmg`) | [clientosh-beta-macos.dmg](https://github.com/hdmain/clientosh/releases/download/beta/clientosh-beta-macos.dmg) |
 | **Checksums** | [CHECKSUMS-beta.txt](https://github.com/hdmain/clientosh/releases/download/beta/CHECKSUMS-beta.txt) |
 
 ```bash

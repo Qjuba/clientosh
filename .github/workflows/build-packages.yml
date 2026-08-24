@@ -1,0 +1,291 @@
+name: Build packages
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:
+        description: Git ref or SHA to build
+        required: true
+        type: string
+      package_label:
+        description: Label used in artifact filenames (for example beta or v1.0.7)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Windows (.exe + portable .zip)
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    env:
+      PACKAGE_LABEL: ${{ inputs.package_label }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Install MSYS2 dependencies
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: true
+          install: >-
+            git
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-libssh
+            mingw-w64-x86_64-openssl
+            mingw-w64-x86_64-ntldd
+
+      - name: Install pinned Qt 6.9.2 and MinGW 13.1
+        shell: pwsh
+        run: |
+          $QtRoot = Join-Path $env:RUNNER_TEMP 'Qt'
+          python -m pip install --upgrade aqtinstall
+          python -m aqt install-qt windows desktop 6.9.2 win64_mingw -O $QtRoot
+          python -m aqt install-tool windows desktop tools_mingw1310 qt.tools.win64_mingw1310 -O $QtRoot
+          $qtPrefix = "$QtRoot\6.9.2\mingw_64"
+          $mingwRoot = "$QtRoot\Tools\mingw1310_64"
+          "QT_ROOT=$qtPrefix" >> $env:GITHUB_ENV
+          "QT_BIN_DIR=$qtPrefix\bin" >> $env:GITHUB_ENV
+          "MINGW_ROOT=$mingwRoot" >> $env:GITHUB_ENV
+
+      - name: Configure
+        run: |
+          cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT" \
+            -DCMAKE_C_COMPILER="$MINGW_ROOT/bin/gcc.exe" \
+            -DCMAKE_CXX_COMPILER="$MINGW_ROOT/bin/g++.exe"
+
+      - name: Build
+        run: cmake --build build-win -j 4
+
+      - name: Copy runtime DLLs
+        run: |
+          ntldd -R build-win/clientosh.exe \
+            | sed 's/\\/\//g' \
+            | grep -oiE '[^ ]+mingw64/bin/[^ ]+\.dll' \
+            | sed -E 's#^.*mingw64/bin/#/mingw64/bin/#' \
+            | sort -u \
+            | while read -r dll; do
+                if [ -f "$dll" ]; then
+                  cp "$dll" build-win/
+                fi
+              done
+          "$QT_BIN_DIR/windeployqt" --no-translations --release build-win/clientosh.exe
+
+      - name: Build and normalize Windows packages
+        run: |
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" build-win/installer/clientosh_installer.iss
+          setup=$(find . -maxdepth 1 -name 'clientosh-*-win64-setup.exe' -print -quit)
+          test -n "$setup"
+          cp "$setup" "clientosh-${PACKAGE_LABEL}-win64-setup.exe"
+          powershell -NoProfile -Command "Compress-Archive -Path 'build-win/*' -DestinationPath 'clientosh-${PACKAGE_LABEL}-win64-portable.zip' -Force"
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-assets
+          path: |
+            clientosh-${{ inputs.package_label }}-win64-setup.exe
+            clientosh-${{ inputs.package_label }}-win64-portable.zip
+          if-no-files-found: error
+
+  build-linux:
+    name: Linux (.deb + .rpm + .AppImage + .tar.gz)
+    runs-on: ubuntu-22.04
+    env:
+      PACKAGE_LABEL: ${{ inputs.package_label }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake pkg-config dpkg-dev rpm \
+            qt6-base-dev libqt6svg6-dev libssh-dev libssl-dev \
+            libgl1-mesa-dev libegl1-mesa-dev imagemagick libfuse2 file
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=/usr
+          cmake --build build-linux -j "$(nproc)"
+
+      - name: Build and normalize Debian and RPM packages
+        run: |
+          cmake --build build-linux --target package
+          deb=$(find build-linux -maxdepth 1 -name '*.deb' -print -quit)
+          rpm=$(find build-linux -maxdepth 1 -name '*.rpm' -print -quit)
+          test -n "$deb"
+          test -n "$rpm"
+          cp "$deb" "clientosh-${PACKAGE_LABEL}-amd64.deb"
+          cp "$rpm" "clientosh-${PACKAGE_LABEL}-x86_64.rpm"
+
+      - name: Build portable tarball
+        run: |
+          cmake --install build-linux --prefix stage/usr
+          tar -C stage -czf "clientosh-${PACKAGE_LABEL}-linux-x86_64.tar.gz" usr
+
+      - name: Download linuxdeploy
+        run: |
+          curl -fsSL -o linuxdeploy.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -fsSL -o linuxdeploy-plugin-qt.AppImage \
+            https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage
+          chmod +x linuxdeploy.AppImage linuxdeploy-plugin-qt.AppImage
+
+      - name: Build AppImage
+        run: |
+          mkdir -p AppDir-clientosh/usr/bin \
+            AppDir-clientosh/usr/share/applications \
+            AppDir-clientosh/usr/share/icons/hicolor/256x256/apps
+          cp build-linux/clientosh AppDir-clientosh/usr/bin/clientosh
+          cp packaging/clientosh.desktop AppDir-clientosh/usr/share/applications/clientosh.desktop
+          convert icons/terminal.svg \
+            AppDir-clientosh/usr/share/icons/hicolor/256x256/apps/clientosh.png
+          export LDAI_OUTPUT_DIR="$PWD"
+          export LD_LIBRARY_PATH="/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+          export QTDIR=/usr/lib/x86_64-linux-gnu
+          export QMAKE=/usr/bin/qmake6
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          ./linuxdeploy.AppImage --appimage-extract-and-run \
+            --appdir AppDir-clientosh \
+            --desktop-file packaging/clientosh.desktop \
+            --icon-file AppDir-clientosh/usr/share/icons/hicolor/256x256/apps/clientosh.png \
+            --plugin qt \
+            --output appimage
+          appimage=$(find . -maxdepth 1 -name '*.AppImage' \
+            ! -name 'linuxdeploy*.AppImage' -print -quit)
+          test -n "$appimage"
+          cp "$appimage" "clientosh-${PACKAGE_LABEL}-x86_64.AppImage"
+
+      - name: Upload Linux packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-assets
+          path: |
+            clientosh-${{ inputs.package_label }}-amd64.deb
+            clientosh-${{ inputs.package_label }}-x86_64.rpm
+            clientosh-${{ inputs.package_label }}-x86_64.AppImage
+            clientosh-${{ inputs.package_label }}-linux-x86_64.tar.gz
+          if-no-files-found: error
+
+  build-arch:
+    name: Arch Linux (.pkg.tar.zst)
+    runs-on: ubuntu-24.04
+    env:
+      PACKAGE_LABEL: ${{ inputs.package_label }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Prepare source package from selected commit
+        run: |
+          version=$(sed -nE 's/^project\(clientosh VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          git archive --format=tar.gz --prefix="clientosh-${version}/" \
+            -o "packaging/arch/clientosh-${version}.tar.gz" HEAD
+          sed -i \
+            -e "s/^pkgver=.*/pkgver=${version}/" \
+            -e "s#^source=.*#source=(\"clientosh-${version}.tar.gz\")#" \
+            packaging/arch/PKGBUILD
+
+      - name: Build Arch package
+        run: |
+          docker run --interactive --rm --privileged \
+            -v "$GITHUB_WORKSPACE":/work \
+            -w /work/packaging/arch \
+            archlinux/archlinux:base-devel \
+          bash -e <<'EOF'
+            pacman -Sy --noconfirm --needed \
+              qt6-base qt6-svg libssh openssl cmake ninja pkgconf
+            useradd -m builder
+            chown -R builder:builder /work
+            runuser -u builder -- makepkg -sf --noconfirm
+          EOF
+
+      - name: Normalize Arch package
+        run: |
+          package=$(find packaging/arch -maxdepth 1 -name '*.pkg.tar.zst' -print -quit)
+          test -n "$package"
+          cp "$package" "clientosh-${PACKAGE_LABEL}-x86_64.pkg.tar.zst"
+
+      - name: Upload Arch package
+        uses: actions/upload-artifact@v4
+        with:
+          name: arch-assets
+          path: clientosh-${{ inputs.package_label }}-x86_64.pkg.tar.zst
+          if-no-files-found: error
+
+  build-macos:
+    name: macOS (.dmg)
+    runs-on: macos-latest
+    env:
+      PACKAGE_LABEL: ${{ inputs.package_label }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - name: Install dependencies
+        run: |
+          brew update
+          brew install qt libssh openssl@3
+
+      - name: Configure and build
+        run: |
+          cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-macos -j "$(sysctl -n hw.ncpu)"
+
+      - name: Assemble application bundle
+        run: |
+          version=$(sed -nE 's/^project\(clientosh VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          test -n "$version"
+          app=build-macos/clientosh.app
+          mkdir -p "$app/Contents/MacOS"
+          cp build-macos/clientosh "$app/Contents/MacOS/clientosh"
+          cat > "$app/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleName</key><string>clientosh</string>
+            <key>CFBundleDisplayName</key><string>clientosh</string>
+            <key>CFBundleIdentifier</key><string>io.github.clientosh</string>
+            <key>CFBundleExecutable</key><string>clientosh</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>CFBundleShortVersionString</key><string>${version}</string>
+            <key>CFBundleVersion</key><string>${version}</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict>
+          </plist>
+          EOF
+
+      - name: Deploy frameworks and build DMG
+        run: |
+          macdeployqt build-macos/clientosh.app -always-overwrite
+          codesign --force --deep --sign - build-macos/clientosh.app
+          hdiutil create -volname clientosh -srcfolder build-macos/clientosh.app \
+            -ov -format UDZO "clientosh-${PACKAGE_LABEL}-macos.dmg"
+
+      - name: Upload macOS package
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-assets
+          path: clientosh-${{ inputs.package_label }}-macos.dmg
+          if-no-files-found: error

@@ -19,7 +19,9 @@ jobs:
       matrix:
         include:
           - name: Linux (Ubuntu, GCC)
-            os: ubuntu-latest
+            # Match the oldest Qt supported by the Linux packaging job so CI
+            # catches accidental use of newer Qt APIs before publishing beta.
+            os: ubuntu-22.04
             cmake_args: -G "Unix Makefiles"
             build_dir: build-linux
           - name: macOS (Clang)

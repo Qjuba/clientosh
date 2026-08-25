@@ -176,8 +176,15 @@ protected:
             // QAbstractItemView stores the hovered index independently of the
             // item delegate. Clear that state and suppress subsequent hover
             // events in viewportEvent() until the drag finishes.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 3, 0)
             QHoverEvent hoverLeave(QEvent::HoverLeave, QPointF(-1, -1), QPointF(-1, -1),
                                    QPointF(position));
+#else
+            // Qt 6.2 (used by the Ubuntu 22.04 package build) only provides
+            // the legacy position/old-position constructor.
+            QHoverEvent hoverLeave(QEvent::HoverLeave, QPointF(-1, -1),
+                                   QPointF(position));
+#endif
             QTreeWidget::viewportEvent(&hoverLeave);
         }
 

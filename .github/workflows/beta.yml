@@ -9,22 +9,26 @@ permissions:
   actions: read
   contents: write
 
-concurrency:
-  group: beta-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
   build:
     name: Build all beta packages
+    concurrency:
+      group: beta-build-${{ github.ref }}
+      cancel-in-progress: true
     uses: ./.github/workflows/build-packages.yml
     with:
       source_ref: ${{ github.sha }}
       package_label: beta
+      build_channel: beta
+      build_number: ${{ github.run_number }}
 
   publish:
     name: Publish rolling beta
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: beta-publish-${{ github.repository }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
         with:
@@ -64,12 +68,20 @@ jobs:
           git tag --force beta "$GITHUB_SHA"
           git push origin refs/tags/beta --force
 
+      - name: Recreate rolling beta release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view beta --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release delete beta --repo "$GITHUB_REPOSITORY" --yes
+          fi
+
       - name: Publish GitHub prerelease
         uses: softprops/action-gh-release@v3
         with:
           tag_name: beta
           target_commitish: ${{ github.sha }}
-          name: Beta (latest main)
+          name: Beta
           prerelease: true
           files: dist/*
           body_path: RELEASE_BODY.md

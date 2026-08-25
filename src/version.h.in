@@ -1,8 +1,11 @@
 #pragma once
 
 // Generated from version.h.in by CMake — do not edit.
-// The version is pulled straight from project(VERSION ...) in CMakeLists.txt.
-#define CLIENTOSH_VERSION "@PROJECT_VERSION@"
+// Numeric product version and the displayed build identity are kept separate.
+#define CLIENTOSH_VERSION "@CLIENTOSH_VERSION_DISPLAY@"
+#define CLIENTOSH_PRODUCT_VERSION "@PROJECT_VERSION@"
+#define CLIENTOSH_BUILD_CHANNEL "@CLIENTOSH_BUILD_CHANNEL@"
+#define CLIENTOSH_BUILD_NUMBER "@CLIENTOSH_BUILD_NUMBER@"
 #define CLIENTOSH_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
 #define CLIENTOSH_VERSION_MINOR @PROJECT_VERSION_MINOR@
 #define CLIENTOSH_VERSION_PATCH @PROJECT_VERSION_PATCH@

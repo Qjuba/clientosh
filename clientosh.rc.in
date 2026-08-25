@@ -3,8 +3,8 @@
 IDI_ICON1 ICON "@CLIENTOSH_ICO_ABS@"
 
 VS_VERSION_INFO VERSIONINFO
- FILEVERSION     @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
- PRODUCTVERSION  @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEVERSION     @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,@CLIENTOSH_VERSION_BUILD@
+ PRODUCTVERSION  @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,@CLIENTOSH_VERSION_BUILD@
  FILEFLAGSMASK   0x3fL
 #ifdef _DEBUG
  FILEFLAGS       0x1L
@@ -21,12 +21,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "clientosh"
             VALUE "FileDescription",  "clientosh SSH Client"
-            VALUE "FileVersion",      "@PROJECT_VERSION@"
+            VALUE "FileVersion",      "@CLIENTOSH_FILE_VERSION@"
             VALUE "InternalName",     "clientosh"
             VALUE "LegalCopyright",   "MIT"
             VALUE "OriginalFilename", "clientosh.exe"
             VALUE "ProductName",      "clientosh"
-            VALUE "ProductVersion",   "@PROJECT_VERSION@"
+            VALUE "ProductVersion",   "@CLIENTOSH_VERSION_DISPLAY@"
         END
     END
     BLOCK "VarFileInfo"

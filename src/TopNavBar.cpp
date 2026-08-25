@@ -85,6 +85,9 @@ TopNavBar::TopNavBar(SessionManager* sessions, SessionWorkspace* workspace, QWid
     m_newBtn = makeNavIcon(QStringLiteral(":/icons/plus.svg"), QStringLiteral("new session"), this);
     m_sftpBtn = makeNavIcon(QStringLiteral(":/icons/folder.svg"),
                             QStringLiteral("open standalone sftp · duplicates active sftp"), this);
+    m_xmodemBtn = makeNavIcon(QStringLiteral(":/icons/upload.svg"),
+                              QStringLiteral("send file via XMODEM"), this);
+    m_xmodemBtn->setVisible(false);
     m_pinBtn = makeNavIcon(QStringLiteral(":/icons/always-on-top.svg"),
                            QStringLiteral("always on top"), this);
     m_pinBtn->setCheckable(true);
@@ -106,6 +109,7 @@ TopNavBar::TopNavBar(SessionManager* sessions, SessionWorkspace* workspace, QWid
     navLay->addSpacing(4);
     navLay->addWidget(m_tabsHost, 1);
     navLay->addWidget(m_stats, 0);
+    navLay->addWidget(m_xmodemBtn);
     navLay->addWidget(m_pinBtn);
     navLay->addWidget(m_sftpBtn);
 
@@ -124,6 +128,11 @@ TopNavBar::TopNavBar(SessionManager* sessions, SessionWorkspace* workspace, QWid
     connect(m_newBtn, &QToolButton::clicked, this, &TopNavBar::newSessionRequested);
     connect(m_sftpBtn, &QToolButton::clicked, this, [this]() {
         emit sftpRequested();
+    });
+    connect(m_xmodemBtn, &QToolButton::clicked, this, [this]() {
+        if (!m_xmodemSessionId.isEmpty() && m_xmodemBtn->isEnabled()) {
+            emit xmodemRequested(m_xmodemSessionId);
+        }
     });
     connect(m_pinBtn, &QToolButton::toggled, this, [this](bool on) {
         m_pinBtn->setToolTip(on ? QStringLiteral("always on top · on")
@@ -165,6 +174,7 @@ TopNavBar::~TopNavBar()
 void TopNavBar::syncActiveChip()
 {
     if (!m_workspace) {
+        syncXmodemAction();
         return;
     }
     const PanelRef active = m_workspace->activePanel();
@@ -175,6 +185,33 @@ void TopNavBar::syncActiveChip()
             chip->setActive(m_workspaceActive && chip->panelRef() == active);
         }
     }
+    syncXmodemAction();
+}
+
+void TopNavBar::syncXmodemAction()
+{
+    m_xmodemSessionId.clear();
+    bool compatible = false;
+    bool transferActive = false;
+
+    if (m_workspaceActive && m_workspace && m_sessions) {
+        const PanelRef active = m_workspace->activePanel();
+        if (active.isValid() && active.kind == PanelKind::Terminal) {
+            if (const auto* live = m_sessions->session(active.sessionId)) {
+                compatible = live->connected && live->profile.isSerial() && live->serial;
+                if (compatible) {
+                    m_xmodemSessionId = active.sessionId;
+                    transferActive = live->serial->isXmodemActive();
+                }
+            }
+        }
+    }
+
+    m_xmodemBtn->setVisible(compatible);
+    m_xmodemBtn->setEnabled(compatible && !transferActive);
+    m_xmodemBtn->setToolTip(transferActive
+        ? QStringLiteral("XMODEM transfer in progress")
+        : QStringLiteral("send file via XMODEM"));
 }
 
 void TopNavBar::setWorkspaceActive(bool active)
@@ -369,6 +406,7 @@ void TopNavBar::refresh()
         m_sftpBtn->setEnabled(m_workspace && !m_workspace->openPanels().isEmpty());
     }
 
+    syncXmodemAction();
     syncStatsProbe();
 }
 

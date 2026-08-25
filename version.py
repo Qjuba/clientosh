@@ -43,25 +43,6 @@ def bump_pkgbuild(text: str, version: str) -> tuple[str, int]:
     return pattern.subn(f"pkgver={version}", text, count=1)
 
 
-def bump_release_yml(text: str, version: str) -> tuple[str, int]:
-    count = 0
-    text, n = re.subn(
-        r"(<key>CFBundleShortVersionString</key><string>)\d+\.\d+\.\d+(</string>)",
-        rf"\g<1>{version}\2",
-        text,
-        count=1,
-    )
-    count += n
-    text, n = re.subn(
-        r"(<key>CFBundleVersion</key><string>)[^<]+(</string>)",
-        rf"\g<1>{version}\2",
-        text,
-        count=1,
-    )
-    count += n
-    return text, count
-
-
 def parse_version_arg(raw: str) -> str:
     version = raw.strip().removeprefix("v")
     if not VERSION_RE.fullmatch(version):
@@ -102,14 +83,6 @@ def main(argv: list[str]) -> int:
         if count:
             write_text(pkgbuild_path, pkg_text)
             updates.append((pkgbuild_path, "pkgver", count))
-
-    release_path = ROOT / ".github" / "workflows" / "release.yml"
-    if release_path.exists():
-        release_text = read_text(release_path)
-        release_text, count = bump_release_yml(release_text, version)
-        if count:
-            write_text(release_path, release_text)
-            updates.append((release_path, "macOS Info.plist", count))
 
     if not updates:
         print("Error: no version fields were updated", file=sys.stderr)

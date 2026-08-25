@@ -251,6 +251,7 @@ private:
     QPropertyAnimation* m_fontZoomFade = nullptr;
     QTimer* m_fontZoomHideTimer = nullptr;
     QMenu* m_contextMenu = nullptr;
+    QAction* m_xmodemSeparator = nullptr;
     QAction* m_xmodemAction = nullptr;
     bool m_xmodemAvailable = false;
 };

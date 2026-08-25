@@ -8,8 +8,18 @@ on:
         required: true
         type: string
       package_label:
-        description: Label used in artifact filenames (for example beta or v1.0.7)
+        description: Label used in artifact filenames (for example beta or v1.0.8)
         required: true
+        type: string
+      build_channel:
+        description: Version channel embedded in the application (beta or stable)
+        required: false
+        default: stable
+        type: string
+      build_number:
+        description: Positive CI build number required by the beta channel
+        required: false
+        default: "0"
         type: string
 
 permissions:
@@ -24,6 +34,8 @@ jobs:
         shell: msys2 {0}
     env:
       PACKAGE_LABEL: ${{ inputs.package_label }}
+      BUILD_CHANNEL: ${{ inputs.build_channel }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -63,12 +75,26 @@ jobs:
       - name: Configure
         run: |
           cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCLIENTOSH_BUILD_CHANNEL="$BUILD_CHANNEL" \
+            -DCLIENTOSH_BUILD_NUMBER="$BUILD_NUMBER" \
             -DCMAKE_PREFIX_PATH="$QT_ROOT" \
             -DCMAKE_C_COMPILER="$MINGW_ROOT/bin/gcc.exe" \
             -DCMAKE_CXX_COMPILER="$MINGW_ROOT/bin/g++.exe"
 
       - name: Build
         run: cmake --build build-win -j 4
+
+      - name: Verify embedded version
+        run: |
+          base=$(sed -nE 's/^project\(clientosh VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          if [ "$BUILD_CHANNEL" = beta ]; then
+            expected="${base}-beta.${BUILD_NUMBER}"
+          else
+            expected="$base"
+          fi
+          actual=$(tr -d '\r\n' < build-win/clientosh-version.txt)
+          test "$actual" = "$expected"
+          grep -Fq "#define CLIENTOSH_VERSION \"$expected\"" build-win/version.h
 
       - name: Copy runtime DLLs
         run: |
@@ -106,6 +132,8 @@ jobs:
     runs-on: ubuntu-22.04
     env:
       PACKAGE_LABEL: ${{ inputs.package_label }}
+      BUILD_CHANNEL: ${{ inputs.build_channel }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -121,8 +149,22 @@ jobs:
       - name: Configure and build
         run: |
           cmake -S . -B build-linux -DCMAKE_BUILD_TYPE=Release \
+            -DCLIENTOSH_BUILD_CHANNEL="$BUILD_CHANNEL" \
+            -DCLIENTOSH_BUILD_NUMBER="$BUILD_NUMBER" \
             -DCMAKE_INSTALL_PREFIX=/usr
           cmake --build build-linux -j "$(nproc)"
+
+      - name: Verify embedded version
+        run: |
+          base=$(sed -nE 's/^project\(clientosh VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          if [ "$BUILD_CHANNEL" = beta ]; then
+            expected="${base}-beta.${BUILD_NUMBER}"
+          else
+            expected="$base"
+          fi
+          actual=$(tr -d '\r\n' < build-linux/clientosh-version.txt)
+          test "$actual" = "$expected"
+          grep -Fq "#define CLIENTOSH_VERSION \"$expected\"" build-linux/version.h
 
       - name: Build and normalize Debian and RPM packages
         run: |
@@ -131,6 +173,16 @@ jobs:
           rpm=$(find build-linux -maxdepth 1 -name '*.rpm' -print -quit)
           test -n "$deb"
           test -n "$rpm"
+          base=$(sed -nE 's/^project\(clientosh VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          if [ "$BUILD_CHANNEL" = beta ]; then
+            test "$(dpkg-deb -f "$deb" Version)" = "${base}~beta.${BUILD_NUMBER}"
+            test "$(rpm -qp --queryformat '%{VERSION}-%{RELEASE}' "$rpm")" = \
+              "${base}-0.beta.${BUILD_NUMBER}"
+          else
+            test "$(dpkg-deb -f "$deb" Version)" = "$base"
+            test "$(rpm -qp --queryformat '%{VERSION}-%{RELEASE}' "$rpm")" = \
+              "${base}-1"
+          fi
           cp "$deb" "clientosh-${PACKAGE_LABEL}-amd64.deb"
           cp "$rpm" "clientosh-${PACKAGE_LABEL}-x86_64.rpm"
 
@@ -188,6 +240,8 @@ jobs:
     runs-on: ubuntu-24.04
     env:
       PACKAGE_LABEL: ${{ inputs.package_label }}
+      BUILD_CHANNEL: ${{ inputs.build_channel }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -195,12 +249,19 @@ jobs:
 
       - name: Prepare source package from selected commit
         run: |
-          version=$(sed -nE 's/^project\(clientosh VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
-          test -n "$version"
+          base=$(sed -nE 's/^project\(clientosh VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          test -n "$base"
+          if [ "$BUILD_CHANNEL" = beta ]; then
+            version="${base}beta${BUILD_NUMBER}"
+          else
+            version="$base"
+          fi
           git archive --format=tar.gz --prefix="clientosh-${version}/" \
             -o "packaging/arch/clientosh-${version}.tar.gz" HEAD
           sed -i \
             -e "s/^pkgver=.*/pkgver=${version}/" \
+            -e "s/^_clientosh_build_channel=.*/_clientosh_build_channel=${BUILD_CHANNEL}/" \
+            -e "s/^_clientosh_build_number=.*/_clientosh_build_number=${BUILD_NUMBER}/" \
             -e "s#^source=.*#source=(\"clientosh-${version}.tar.gz\")#" \
             packaging/arch/PKGBUILD
 
@@ -225,6 +286,13 @@ jobs:
             ! -name 'clientosh-debug-*' \
             -print -quit)
           test -n "$package"
+          base=$(sed -nE 's/^project\(clientosh VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          if [ "$BUILD_CHANNEL" = beta ]; then
+            expected="clientosh-${base}beta${BUILD_NUMBER}-1-x86_64.pkg.tar.zst"
+          else
+            expected="clientosh-${base}-1-x86_64.pkg.tar.zst"
+          fi
+          test "$(basename "$package")" = "$expected"
           cp "$package" "clientosh-${PACKAGE_LABEL}-x86_64.pkg.tar.zst"
 
       - name: Upload Arch package
@@ -239,6 +307,8 @@ jobs:
     runs-on: macos-latest
     env:
       PACKAGE_LABEL: ${{ inputs.package_label }}
+      BUILD_CHANNEL: ${{ inputs.build_channel }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -251,13 +321,28 @@ jobs:
 
       - name: Configure and build
         run: |
-          cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release
+          cmake -S . -B build-macos -DCMAKE_BUILD_TYPE=Release \
+            -DCLIENTOSH_BUILD_CHANNEL="$BUILD_CHANNEL" \
+            -DCLIENTOSH_BUILD_NUMBER="$BUILD_NUMBER"
           cmake --build build-macos -j "$(sysctl -n hw.ncpu)"
+
+      - name: Verify embedded version
+        run: |
+          base=$(sed -nE 's/^project\(clientosh VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
+          if [ "$BUILD_CHANNEL" = beta ]; then
+            expected="${base}-beta.${BUILD_NUMBER}"
+          else
+            expected="$base"
+          fi
+          actual=$(tr -d '\r\n' < build-macos/clientosh-version.txt)
+          test "$actual" = "$expected"
+          grep -Fq "#define CLIENTOSH_VERSION \"$expected\"" build-macos/version.h
 
       - name: Assemble application bundle
         run: |
           version=$(sed -nE 's/^project\(clientosh VERSION ([0-9.]+).*/\1/p' CMakeLists.txt)
           test -n "$version"
+          display_version=$(tr -d '\r\n' < build-macos/clientosh-version.txt)
           app=build-macos/clientosh.app
           mkdir -p "$app/Contents/MacOS"
           cp build-macos/clientosh "$app/Contents/MacOS/clientosh"
@@ -273,6 +358,7 @@ jobs:
             <key>CFBundlePackageType</key><string>APPL</string>
             <key>CFBundleShortVersionString</key><string>${version}</string>
             <key>CFBundleVersion</key><string>${version}</string>
+            <key>CFBundleGetInfoString</key><string>clientosh ${display_version}</string>
             <key>LSMinimumSystemVersion</key><string>12.0</string>
             <key>NSHighResolutionCapable</key><true/>
           </dict>

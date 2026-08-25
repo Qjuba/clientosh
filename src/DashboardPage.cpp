@@ -29,11 +29,6 @@
 #include <QDateTime>
 #include <QDesktopServices>
 #include <QDir>
-#include <QDrag>
-#include <QDragEnterEvent>
-#include <QDragLeaveEvent>
-#include <QDragMoveEvent>
-#include <QDropEvent>
 #include <QFile>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -43,13 +38,13 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
-#include <QMimeData>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QFrame>
 #include <QSysInfo>
 #include <QUuid>
 #include <QHeaderView>
+#include <QHoverEvent>
 #include <QTreeWidget>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -79,7 +74,6 @@
 
 namespace {
 constexpr int kHostFolderStateRole = Qt::UserRole + 2;
-constexpr auto kHostProfileMimeType = "application/x-clientosh-host-profile";
 
 QString hostTagFolderKey(const QString& tagName)
 {
@@ -108,7 +102,6 @@ public:
     explicit HostTreeWidget(QWidget* parent = nullptr)
         : QTreeWidget(parent)
     {
-        setAcceptDrops(true);
         setDragEnabled(false);
         setDropIndicatorShown(false);
         viewport()->setMouseTracking(true);
@@ -120,6 +113,16 @@ public:
     }
 
 protected:
+    bool viewportEvent(QEvent* event) override
+    {
+        if (m_dragging
+            && (event->type() == QEvent::HoverEnter || event->type() == QEvent::HoverMove)) {
+            event->accept();
+            return true;
+        }
+        return QTreeWidget::viewportEvent(event);
+    }
+
     void mousePressEvent(QMouseEvent* event) override
     {
         QTreeWidget::mousePressEvent(event);
@@ -140,135 +143,107 @@ protected:
 
     void mouseMoveEvent(QMouseEvent* event) override
     {
-        if (event->buttons() == Qt::NoButton) {
+        const QPoint position = event->position().toPoint();
+        if (!(event->buttons() & Qt::LeftButton)) {
+            if (m_dragging) {
+                finishInternalDrag();
+            }
             QTreeWidget::mouseMoveEvent(event);
             return;
         }
 
-        if (!(event->buttons() & Qt::LeftButton) || m_dragProfileId.isEmpty()
-            || (event->position().toPoint() - m_dragStartPosition).manhattanLength()
-                < QApplication::startDragDistance()) {
-            QTreeWidget::mouseMoveEvent(event);
-            return;
+        if (!m_dragging) {
+            if (m_dragProfileId.isEmpty()
+                || (position - m_dragStartPosition).manhattanLength()
+                    < QApplication::startDragDistance()) {
+                QTreeWidget::mouseMoveEvent(event);
+                return;
+            }
+
+            QTreeWidgetItem* item = findSavedHost(m_dragProfileId);
+            if (!item) {
+                m_dragProfileId.clear();
+                return;
+            }
+
+            QRect rowRect = visualItemRect(item);
+            rowRect.setLeft(0);
+            rowRect.setRight(viewport()->width() - 1);
+            m_dragPixmap = viewport()->grab(rowRect);
+            m_dragging = true;
+            viewport()->setCursor(Qt::ClosedHandCursor);
+
+            // QAbstractItemView stores the hovered index independently of the
+            // item delegate. Clear that state and suppress subsequent hover
+            // events in viewportEvent() until the drag finishes.
+            QHoverEvent hoverLeave(QEvent::HoverLeave, QPointF(-1, -1), QPointF(-1, -1),
+                                   QPointF(position));
+            QTreeWidget::viewportEvent(&hoverLeave);
         }
 
-        QTreeWidgetItem* item = findSavedHost(m_dragProfileId);
-        if (!item) {
-            m_dragProfileId.clear();
-            return;
+        m_dragPosition = position;
+        const DropLocation location = dropLocationAt(position, m_dragProfileId);
+        if (location.folder && wouldChangeOrder(m_dragProfileId, location)) {
+            setDropTarget(location);
+        } else {
+            clearDropTarget();
         }
-
-        QRect rowRect = visualItemRect(item);
-        rowRect.setLeft(0);
-        rowRect.setRight(viewport()->width() - 1);
-        const QPixmap sourcePixmap = viewport()->grab(rowRect);
-        QPixmap dragPixmap(sourcePixmap.size());
-        dragPixmap.fill(Qt::transparent);
-        {
-            QPainter painter(&dragPixmap);
-            painter.setOpacity(0.68);
-            painter.drawPixmap(0, 0, sourcePixmap);
-        }
-
-        QDrag drag(this);
-        auto* mimeData = new QMimeData;
-        mimeData->setData(kHostProfileMimeType, m_dragProfileId.toUtf8());
-        drag.setMimeData(mimeData);
-        drag.setPixmap(dragPixmap);
-        drag.setHotSpot(QPoint(qBound(0, m_dragHotSpot.x(), dragPixmap.width() - 1),
-                               qBound(0, m_dragHotSpot.y(), dragPixmap.height() - 1)));
-
-        viewport()->setCursor(Qt::ClosedHandCursor);
-        drag.exec(Qt::MoveAction);
-        viewport()->unsetCursor();
-        m_dragProfileId.clear();
-        clearDropTarget();
+        viewport()->update();
+        event->accept();
     }
 
     void mouseReleaseEvent(QMouseEvent* event) override
     {
+        if (event->button() == Qt::LeftButton && m_dragging) {
+            const QString profileId = m_dragProfileId;
+            const DropLocation location = dropLocationAt(event->position().toPoint(), profileId);
+            const bool canMove = location.folder && wouldChangeOrder(profileId, location);
+            const QString targetTag = canMove
+                ? location.folder->data(0, Qt::UserRole).toString()
+                : QString();
+            const QString beforeProfileId = canMove ? location.beforeProfileId : QString();
+
+            finishInternalDrag();
+            event->accept();
+            if (canMove && m_profileDropHandler) {
+                m_profileDropHandler(profileId, targetTag, beforeProfileId);
+            }
+            return;
+        }
+
         m_dragProfileId.clear();
         QTreeWidget::mouseReleaseEvent(event);
-    }
-
-    void dragEnterEvent(QDragEnterEvent* event) override
-    {
-        if (event->source() == this && event->mimeData()->hasFormat(kHostProfileMimeType)) {
-            event->setDropAction(Qt::MoveAction);
-            event->accept();
-            return;
-        }
-        event->ignore();
-    }
-
-    void dragMoveEvent(QDragMoveEvent* event) override
-    {
-        const QString profileId = QString::fromUtf8(
-            event->mimeData()->data(kHostProfileMimeType));
-        const DropLocation location = dropLocationAt(event->position().toPoint(), profileId);
-        if (!location.folder || profileId.isEmpty() || !wouldChangeOrder(profileId, location)) {
-            clearDropTarget();
-            event->ignore();
-            return;
-        }
-
-        setDropTarget(location);
-        event->setDropAction(Qt::MoveAction);
-        event->accept();
-    }
-
-    void dragLeaveEvent(QDragLeaveEvent* event) override
-    {
-        clearDropTarget();
-        event->accept();
-    }
-
-    void dropEvent(QDropEvent* event) override
-    {
-        const QString profileId = QString::fromUtf8(
-            event->mimeData()->data(kHostProfileMimeType));
-        const DropLocation location = dropLocationAt(event->position().toPoint(), profileId);
-        if (!location.folder || profileId.isEmpty() || !wouldChangeOrder(profileId, location)) {
-            clearDropTarget();
-            event->ignore();
-            return;
-        }
-
-        const QString targetTag = location.folder->data(0, Qt::UserRole).toString();
-        const QString beforeProfileId = location.beforeProfileId;
-        clearDropTarget();
-        event->setDropAction(Qt::MoveAction);
-        event->accept();
-        if (m_profileDropHandler) {
-            m_profileDropHandler(profileId, targetTag, beforeProfileId);
-        }
     }
 
     void paintEvent(QPaintEvent* event) override
     {
         QTreeWidget::paintEvent(event);
-        if (!m_dropFolder) {
-            return;
-        }
-        QColor outline = palette().color(QPalette::Highlight);
-        outline.setAlpha(210);
-
         QPainter painter(viewport());
-        if (m_dropAnchor) {
-            const QRect anchorRect = visualItemRect(m_dropAnchor);
-            const int y = m_dropBefore ? anchorRect.top() : anchorRect.bottom();
-            painter.setPen(QPen(outline, 2));
-            painter.drawLine(1, y, viewport()->width() - 2, y);
-        } else {
-            QRect targetRect = visualItemRect(m_dropFolder);
-            targetRect.setLeft(1);
-            targetRect.setRight(viewport()->width() - 2);
-            targetRect.adjust(0, 1, 0, -1);
-            QColor fill = palette().color(QPalette::Highlight);
-            fill.setAlpha(44);
-            painter.fillRect(targetRect, fill);
-            painter.setPen(QPen(outline, 1));
-            painter.drawRect(targetRect.adjusted(0, 0, -1, -1));
+        if (m_dropFolder) {
+            QColor outline = palette().color(QPalette::Highlight);
+            outline.setAlpha(210);
+
+            if (m_dropAnchor) {
+                const QRect anchorRect = visualItemRect(m_dropAnchor);
+                const int y = m_dropBefore ? anchorRect.top() : anchorRect.bottom();
+                painter.setPen(QPen(outline, 2));
+                painter.drawLine(1, y, viewport()->width() - 2, y);
+            } else {
+                QRect targetRect = visualItemRect(m_dropFolder);
+                targetRect.setLeft(1);
+                targetRect.setRight(viewport()->width() - 2);
+                targetRect.adjust(0, 1, 0, -1);
+                QColor fill = palette().color(QPalette::Highlight);
+                fill.setAlpha(44);
+                painter.fillRect(targetRect, fill);
+                painter.setPen(QPen(outline, 1));
+                painter.drawRect(targetRect.adjusted(0, 0, -1, -1));
+            }
+        }
+
+        if (m_dragging && !m_dragPixmap.isNull()) {
+            painter.setOpacity(0.68);
+            painter.drawPixmap(m_dragPosition - m_dragHotSpot, m_dragPixmap);
         }
     }
 
@@ -391,9 +366,21 @@ private:
         viewport()->update();
     }
 
+    void finishInternalDrag()
+    {
+        m_dragging = false;
+        m_dragPixmap = QPixmap();
+        m_dragProfileId.clear();
+        viewport()->unsetCursor();
+        clearDropTarget();
+    }
+
     QPoint m_dragStartPosition;
     QPoint m_dragHotSpot;
+    QPoint m_dragPosition;
+    QPixmap m_dragPixmap;
     QString m_dragProfileId;
+    bool m_dragging = false;
     QTreeWidgetItem* m_dropFolder = nullptr;
     QTreeWidgetItem* m_dropAnchor = nullptr;
     bool m_dropBefore = false;

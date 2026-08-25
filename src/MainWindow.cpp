@@ -95,6 +95,8 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_topNav, &TopNavBar::panelSelectRequested, this, &MainWindow::openOrFocusPanel);
     connect(m_topNav, &TopNavBar::panelCloseRequested, this, &MainWindow::closePanel);
     connect(m_topNav, &TopNavBar::savePanelRequested, this, &MainWindow::savePanelProfile);
+    connect(m_topNav, &TopNavBar::xmodemRequested, this,
+            [this](const QString& id) { startXmodemTransfer(id); });
     connect(m_topNav, &TopNavBar::panelPreviewRequested, this, [this](const PanelRef& ref) {
         // Drag-hover over a tab: activate that viewport. Do not rebuild tabs —
         // destroying the drag-source chip mid-drag crashes.
@@ -196,6 +198,7 @@ MainWindow::MainWindow(QWidget* parent)
                     dialog->setLabelText(QStringLiteral("Waiting for the receiver · %1 MiB")
                                              .arg(double(totalBytes) / (1024.0 * 1024.0), 0, 'f', 1));
                 }
+                m_topNav->refresh();
             });
     connect(m_sessions, &SessionManager::xmodemProgress, this,
             [this](const QString& id, qint64 sentBytes, qint64 totalBytes, int retries) {
@@ -217,6 +220,7 @@ MainWindow::MainWindow(QWidget* parent)
             term->setXmodemAvailable(live && live->connected && live->profile.isSerial());
             term->appendOutput(QByteArray("\r\n[XMODEM transfer completed]\r\n"));
         }
+        m_topNav->refresh();
     });
     connect(m_sessions, &SessionManager::xmodemError, this,
             [this](const QString& id, const QString& message) {
@@ -232,6 +236,7 @@ MainWindow::MainWindow(QWidget* parent)
                 if (hadDialog && message != QLatin1String("transfer cancelled")) {
                     QMessageBox::warning(this, QStringLiteral("XMODEM"), message);
                 }
+                m_topNav->refresh();
             });
 
     connect(m_sessions, &SessionManager::sessionClosed, this, [this](const QString& id) {
@@ -478,7 +483,7 @@ void MainWindow::startXmodemTransfer(const QString& id)
 
     const QString path = QFileDialog::getOpenFileName(
         this, QStringLiteral("Select file to send via XMODEM"), QString(),
-        QStringLiteral("Cisco images (*.bin *.tar);;All files (*)"));
+        QStringLiteral("Firmware files (*.bin *.tar);;All files (*)"));
     if (path.isEmpty()) return;
 
     const QFileInfo info(path);
@@ -512,6 +517,7 @@ void MainWindow::startXmodemTransfer(const QString& id)
         term->appendOutput(QByteArray("\r\n[XMODEM transfer starting]\r\n"));
     }
     m_sessions->startXmodem(id, path);
+    m_topNav->refresh();
 }
 
 void MainWindow::closeXmodemProgress(const QString& id)

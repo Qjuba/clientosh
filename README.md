@@ -72,7 +72,7 @@
 - **📊 Live server stats** - per-session CPU / RAM / disk readouts pushed over a dedicated SSH channel on a configurable interval.
 - **🪟 Detach & re-attach** - pull a terminal out into its own viewport, then dock it right back into the workspace.
 - **🎨 Raw dark UI with motion** - flat, high-contrast monospace theme with subtle eased glows and hover fills (`src/ui/Motion`), plus a light theme, adjustable fonts, and optional blurred background images.
-- **🔧 Single-source-of-truth builds** - version bumped once in `project(...)` flows through the About tab, Windows RC resources, NSIS/Inno installers, and package metadata automatically.
+- **🔧 Channel-aware builds** - the product version in `project(...)` is combined with an explicit `dev`, `beta`, or `stable` build channel and flows through About, Windows resources, installers, and package metadata.
 - **🧩 Addon marketplace** - browse and install optional addons from a remote catalog (Settings → Addons); nothing loads until you install and enable it.
 
 > 💡 **What makes clientosh "fast"?** It's a **native Qt 6 / C++** app - no Electron or web-view overhead - so it's snappy to launch and sips about **~30 MB RAM**. Network I/O never touches the UI thread, the vault decrypts near-instantly via an in-memory machine-bound key (no keyring/DPAPI latency at launch), and animations are vsync-paced with no continuous timers while idle.
@@ -224,6 +224,13 @@ cmake --build build-linux -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu || echo 4)
 ./build-linux/clientosh
 ```
 
+An ordinary source build reports `<version>-dev`. Official rolling beta and
+stable builds set the channel in CI; to reproduce a beta identity locally use:
+
+```bash
+cmake -S . -B build-beta -DCLIENTOSH_BUILD_CHANNEL=beta -DCLIENTOSH_BUILD_NUMBER=1
+```
+
 If CMake cannot find Qt, point it at the Qt6 include tree:
 
 ```bash
@@ -257,10 +264,19 @@ cmake --build  --preset windows-qt692-mingw
 
 ```bash
 # Linux - .deb
-chmod +x scripts/build-deb.sh
 ./scripts/build-deb.sh
 sudo apt install ./build-deb/clientosh_*.deb
+
+# Reproduce a beta package (About: 1.0.8-beta.1)
+CLIENTOSH_BUILD_CHANNEL=beta CLIENTOSH_BUILD_NUMBER=1 ./scripts/build-deb.sh
+
+# Build a stable RPM
+CLIENTOSH_BUILD_CHANNEL=stable ./scripts/build-rpm.sh
 ```
+
+Both packaging scripts default to the `dev` channel. Supported values for
+`CLIENTOSH_BUILD_CHANNEL` are `dev`, `beta`, and `stable`; `beta` additionally
+requires a positive numeric `CLIENTOSH_BUILD_NUMBER`.
 
 <br/>
 
@@ -493,7 +509,7 @@ The **CI** workflow builds and smoke-tests the project on Ubuntu, macOS, and Win
 
 > 🔐 **Security note:** host-key checking is intentionally disabled to keep the local client raw and friction-free. Prefer running clientosh on **trusted networks** until key verification (the top roadmap item) lands.
 
-> 💡 **Pro tip:** because the app version lives only in `project(VERSION ...)` at the top of `CMakeLists.txt`, bump it **once** and every artifact - the About tab, Windows RC, and both installers - follows automatically.
+> 💡 **Pro tip:** bump the numeric product version once in `project(VERSION ...)`. CMake then adds the selected build channel consistently to About, Windows resources, installers, and Linux package metadata.
 
 <br/>
 

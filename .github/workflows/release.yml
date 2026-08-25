@@ -22,6 +22,8 @@ jobs:
     with:
       source_ref: ${{ inputs.tag || github.ref }}
       package_label: ${{ inputs.tag || github.ref_name }}
+      build_channel: stable
+      build_number: "0"
 
   publish:
     name: Publish stable release

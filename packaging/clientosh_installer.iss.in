@@ -6,6 +6,7 @@
 
 #define AppName      "clientosh"
 #define AppVersion   "@APP_VERSION@"
+#define AppFileVersion "@APP_FILE_VERSION@"
 #define AppPublisher "clientosh"
 #define AppURL       "https://github.com/hdmain/clientosh"
 #define AppExeName   "clientosh.exe"
@@ -37,7 +38,7 @@ ArchitecturesAllowed=x64compatible
 RestartIfNeededByRun=no
 CloseApplications=yes
 DisableDirPage=auto
-VersionInfoVersion={#AppVersion}
+VersionInfoVersion={#AppFileVersion}
 VersionInfoCompany={#AppPublisher}
 VersionInfoDescription={#AppName} SSH Client
 VersionInfoCopyright=MIT

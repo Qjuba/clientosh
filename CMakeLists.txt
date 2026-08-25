@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(clientosh VERSION 1.0.7 LANGUAGES CXX)
+project(clientosh VERSION 1.0.8 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,14 +11,58 @@ include(GNUInstallDirs)
 include(CTest)
 
 # ---- Version header -------------------------------------------------------
-# Generates src/version.h (from version.h.in) so the app can display the exact
-# version declared by project(VERSION ...) at the top of this file. Bump the
-# version once here and every artifact (About tab, RC, installers) follows.
+# Keep the numeric product version separate from the build channel. Official
+# release builds pass "stable", rolling beta builds pass "beta" and a numeric
+# CI build number, while an ordinary local build is clearly marked as "dev".
+set(CLIENTOSH_BUILD_CHANNEL "dev" CACHE STRING
+    "Build channel used in the displayed and package version (dev, beta, stable)")
+set_property(CACHE CLIENTOSH_BUILD_CHANNEL PROPERTY STRINGS dev beta stable)
+set(CLIENTOSH_BUILD_NUMBER "" CACHE STRING
+    "Positive numeric build identifier required for beta builds")
+
+if(NOT CLIENTOSH_BUILD_CHANNEL MATCHES "^(dev|beta|stable)$")
+    message(FATAL_ERROR
+        "CLIENTOSH_BUILD_CHANNEL must be one of: dev, beta, stable")
+endif()
+
+set(CLIENTOSH_VERSION_BUILD 0)
+if(CLIENTOSH_BUILD_CHANNEL STREQUAL "beta")
+    if(NOT CLIENTOSH_BUILD_NUMBER MATCHES "^[1-9][0-9]*$")
+        message(FATAL_ERROR
+            "Beta builds require a positive numeric CLIENTOSH_BUILD_NUMBER")
+    endif()
+    set(CLIENTOSH_VERSION_DISPLAY
+        "${PROJECT_VERSION}-beta.${CLIENTOSH_BUILD_NUMBER}")
+    set(CLIENTOSH_DEBIAN_VERSION
+        "${PROJECT_VERSION}~beta.${CLIENTOSH_BUILD_NUMBER}")
+    set(CLIENTOSH_RPM_RELEASE "0.beta.${CLIENTOSH_BUILD_NUMBER}")
+    # PE file versions use four unsigned 16-bit numeric components.
+    math(EXPR CLIENTOSH_VERSION_BUILD "${CLIENTOSH_BUILD_NUMBER} % 65535")
+    if(CLIENTOSH_VERSION_BUILD EQUAL 0)
+        set(CLIENTOSH_VERSION_BUILD 1)
+    endif()
+elseif(CLIENTOSH_BUILD_CHANNEL STREQUAL "stable")
+    set(CLIENTOSH_VERSION_DISPLAY "${PROJECT_VERSION}")
+    set(CLIENTOSH_DEBIAN_VERSION "${PROJECT_VERSION}")
+    set(CLIENTOSH_RPM_RELEASE "1")
+else()
+    set(CLIENTOSH_VERSION_DISPLAY "${PROJECT_VERSION}-dev")
+    set(CLIENTOSH_DEBIAN_VERSION "${PROJECT_VERSION}~dev")
+    set(CLIENTOSH_RPM_RELEASE "0.dev")
+endif()
+
+set(CLIENTOSH_FILE_VERSION
+    "${PROJECT_VERSION_MAJOR}.${PROJECT_VERSION_MINOR}.${PROJECT_VERSION_PATCH}.${CLIENTOSH_VERSION_BUILD}")
+message(STATUS "clientosh display version: ${CLIENTOSH_VERSION_DISPLAY}")
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/clientosh-version.txt"
+    "${CLIENTOSH_VERSION_DISPLAY}\n")
+
+# Generates src/version.h (from version.h.in) so About, --version and Qt all
+# report the channel-aware version computed above.
 configure_file(src/version.h.in "${CMAKE_CURRENT_BINARY_DIR}/version.h" @ONLY)
 
-# The Windows resource file and the NSIS/Inno installer scripts are generated
-# from .in templates so the version lives only in the "VERSION" argument above.
-# Bump the version in project(...) and every artifact follows automatically.
+# Windows resources and installer scripts receive both the channel-aware
+# display version and a strictly numeric four-part file version.
 if(WIN32)
     set(CLIENTOSH_GENERATED_DIR "${CMAKE_CURRENT_BINARY_DIR}/installer")
 
@@ -30,7 +74,8 @@ if(WIN32)
     string(REPLACE "/" "\\\\" CLIENTOSH_BINARY_WIN "${CLIENTOSH_BINARY_CMAKE}")
 
     # Substitution values consumed by the *.in templates (@ONLY).
-    set(APP_VERSION   "${PROJECT_VERSION}")
+    set(APP_VERSION   "${CLIENTOSH_VERSION_DISPLAY}")
+    set(APP_FILE_VERSION "${CLIENTOSH_FILE_VERSION}")
     set(BUILD_DIR     "${CLIENTOSH_BINARY_WIN}")
     set(OUT_DIR       "${CLIENTOSH_SOURCE_WIN}")
     set(LICENSE_DIR   "${CLIENTOSH_SOURCE_WIN}\\LICENSE")
@@ -455,6 +500,7 @@ if(UNIX AND NOT APPLE)
 
     # ---- Debian / Ubuntu (.deb) ----
     set(CPACK_DEBIAN_PACKAGE_MAINTAINER "clientosh <clientosh@localhost>")
+    set(CPACK_DEBIAN_PACKAGE_VERSION "${CLIENTOSH_DEBIAN_VERSION}")
     set(CPACK_DEBIAN_PACKAGE_SECTION "net")
     set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
     set(CPACK_DEBIAN_FILE_NAME "DEB-DEFAULT")
@@ -466,6 +512,8 @@ if(UNIX AND NOT APPLE)
 
     # ---- RPM (Fedora / RHEL / openSUSE) ----
     set(CPACK_RPM_PACKAGE_SUMMARY "Raw dark-gray SSH client (Qt 6 + libssh)")
+    set(CPACK_RPM_PACKAGE_VERSION "${PROJECT_VERSION}")
+    set(CPACK_RPM_PACKAGE_RELEASE "${CLIENTOSH_RPM_RELEASE}")
     set(CPACK_RPM_PACKAGE_LICENSE "MIT")
     set(CPACK_RPM_PACKAGE_GROUP "Applications/Internet")
     set(CPACK_RPM_PACKAGE_URL "https://github.com/hdmain/clientosh")

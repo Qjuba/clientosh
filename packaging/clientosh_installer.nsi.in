@@ -6,6 +6,7 @@
 
 !define APP_NAME        "clientosh"
 !define APP_VERSION     "@APP_VERSION@"
+!define APP_FILE_VERSION "@APP_FILE_VERSION@"
 !define APP_PUBLISHER   "clientosh"
 !define APP_URL         "https://github.com/hdmain/clientosh"
 !define EXE_NAME        "clientosh.exe"
@@ -55,12 +56,12 @@ Icon "@ICO_DIR@"
 UninstallIcon "@ICO_DIR@"
 
 ; ---- Version info embedded in the installer EXE ----
-VIProductVersion "${APP_VERSION}.0"
+VIProductVersion "${APP_FILE_VERSION}"
 VIAddVersionKey "ProductName"      "${APP_NAME}"
 VIAddVersionKey "ProductVersion"   "${APP_VERSION}"
 VIAddVersionKey "CompanyName"      "${APP_PUBLISHER}"
 VIAddVersionKey "FileDescription"  "clientosh SSH Client Installer"
-VIAddVersionKey "FileVersion"      "${APP_VERSION}"
+VIAddVersionKey "FileVersion"      "${APP_FILE_VERSION}"
 VIAddVersionKey "LegalCopyright"   "MIT"
 
 ; ============================================================

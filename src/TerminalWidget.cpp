@@ -523,7 +523,11 @@ void TerminalWidget::setInteractive(bool enabled)
 void TerminalWidget::setXmodemAvailable(bool enabled)
 {
     m_xmodemAvailable = enabled;
-    if (m_xmodemAction) m_xmodemAction->setEnabled(enabled);
+    if (m_xmodemSeparator) m_xmodemSeparator->setVisible(enabled);
+    if (m_xmodemAction) {
+        m_xmodemAction->setVisible(enabled);
+        m_xmodemAction->setEnabled(enabled);
+    }
 }
 
 void TerminalWidget::clearTerminal()
@@ -2035,16 +2039,10 @@ void TerminalWidget::showContextMenu(const QPoint& globalPos)
         auto* pasteAction = m_contextMenu->addAction(QStringLiteral("Paste"));
         connect(pasteAction, &QAction::triggered, this, [this]() { pasteClipboard(); });
 
-        auto* bothAction = m_contextMenu->addAction(QStringLiteral("Copy & Paste"));
-        connect(bothAction, &QAction::triggered, this, [this]() {
-            if (hasSelection()) {
-                copySelectionToClipboard();
-            }
-            pasteClipboard();
-        });
-
-        m_contextMenu->addSeparator();
+        m_xmodemSeparator = m_contextMenu->addSeparator();
+        m_xmodemSeparator->setVisible(m_xmodemAvailable);
         m_xmodemAction = m_contextMenu->addAction(QStringLiteral("Send file via XMODEM…"));
+        m_xmodemAction->setVisible(m_xmodemAvailable);
         m_xmodemAction->setEnabled(m_xmodemAvailable);
         connect(m_xmodemAction, &QAction::triggered, this,
                 [this]() { emit xmodemSendRequested(); });
@@ -2690,6 +2688,15 @@ void TerminalWidget::mousePressEvent(QMouseEvent* event)
     setFocus(Qt::MouseFocusReason);
     const QPoint cell = cellFromPos(event->pos());
 
+    // The explicit menu setting is a local UI choice and takes precedence over
+    // xterm mouse reporting. In standard mode, right-click can still be sent to
+    // a mouse-aware remote application or used for PuTTY-style paste.
+    if (event->button() == Qt::RightButton && AppSettings::copyPasteMenu()) {
+        showContextMenu(event->globalPosition().toPoint());
+        event->accept();
+        return;
+    }
+
     if (shouldReportMouse(event)) {
         clearSelection();
         const int btn = encodeMouseButton(event->button(), false);
@@ -2703,12 +2710,8 @@ void TerminalWidget::mousePressEvent(QMouseEvent* event)
     }
 
     if (event->button() == Qt::RightButton) {
-        if (AppSettings::copyPasteMenu()) {
-            showContextMenu(event->globalPosition().toPoint());
-        } else {
-            // PuTTY: right-click pastes
-            pasteClipboard();
-        }
+        // PuTTY: right-click pastes when the local context-menu mode is off.
+        pasteClipboard();
         event->accept();
         return;
     }

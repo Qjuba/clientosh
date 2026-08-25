@@ -38,6 +38,7 @@ signals:
     void panelPreviewRequested(const PanelRef& ref);
     void savePanelRequested(const PanelRef& ref);
     void sftpRequested();
+    void xmodemRequested(const QString& sessionId);
     void alwaysOnTopToggled(bool on);
 
 protected:
@@ -54,6 +55,7 @@ private:
     bool shouldCompactStats() const;
     void clearStatsDisplay();
     void hideStatsUntilData();
+    void syncXmodemAction();
     void showPanelContextMenu(const PanelRef& ref, const QPoint& globalPos);
 
     SessionManager* m_sessions = nullptr;
@@ -64,11 +66,13 @@ private:
     QToolButton* m_newBtn = nullptr;
     QToolButton* m_pinBtn = nullptr;
     QToolButton* m_sftpBtn = nullptr;
+    QToolButton* m_xmodemBtn = nullptr;
     QLabel* m_stats = nullptr;
     QString m_statsText;
     bool m_statsHaveData = false;
     bool m_statsCompact = false;
     bool m_workspaceActive = false;
+    QString m_xmodemSessionId;
 
     QThread* m_statsThread = nullptr;
     ServerStatsClient* m_statsClient = nullptr;

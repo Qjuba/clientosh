@@ -2483,6 +2483,42 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
     static const QRegularExpression neutralParityDisabled(
         QStringLiteral(R"(\bparity\s+disabled\b)"), QRegularExpression::CaseInsensitiveOption);
     const QRegularExpressionMatch parityDisabledMatch = neutralParityDisabled.match(line);
+    static const QRegularExpression neutralUpDownHeader(
+        QStringLiteral(R"(\bUp/Down\b)"), QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch upDownHeaderMatch = neutralUpDownHeader.match(line);
+    static const QRegularExpression neutralConnectedRouteLegend(
+        QStringLiteral(R"(\bC\s*-\s*Connected\b,?)"), QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch connectedRouteLegendMatch = neutralConnectedRouteLegend.match(line);
+    static const QRegularExpression neutralMacForwardingTable(
+        QStringLiteral(R"(\bMAC\s+forwarding\s+table\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch macForwardingTableMatch = neutralMacForwardingTable.match(line);
+    static const QRegularExpression neutralOspfSetting(
+        QStringLiteral(
+            R"(\b(?:Incremental-SPF\s+disabled|Event-log\s+enabled|(?:IETF|Cisco)\s+NSF\s+helper\s+support\s+enabled)\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch ospfSettingMatch = neutralOspfSetting.match(line);
+    static const QRegularExpression neutralIpInterfaceSetting(
+        QStringLiteral(
+            R"(^\s*(?:IP\b.*|Proxy\s+ARP|Split\s+horizon|Router\s+Discovery|Policy\s+routing|Network\s+address\s+translation|TCP/IP\s+header\s+compression)\s+(?:is|are)\s+(?:enabled|disabled)\b)"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch ipInterfaceSettingMatch = neutralIpInterfaceSetting.match(line);
+    static const QRegularExpression neutralAclPermitLine(
+        QStringLiteral(
+            R"(^\s*(?:(?:(?:\d+|sequence\s+\d+)\s+)?permit\b|access-list\b.*\bpermit\b))"),
+        QRegularExpression::CaseInsensitiveOption);
+    const bool suppressAclPermit = neutralAclPermitLine.match(line).hasMatch();
+    static const QRegularExpression ospfNeighborExchangeLoading(
+        QStringLiteral(
+            R"((?:\b(?:neighbor|nbr)\b.*(?:\bstate(?:\s+is)?|\s->)\s*(?:exchange|loading)\b|\bstate(?:\s+is)?\s*(?:exchange|loading)\b|\b(?:exchange|loading)/(?:DR|BDR|DROTHER|-)(?![A-Za-z0-9_])))"),
+        QRegularExpression::CaseInsensitiveOption);
+    const bool hasOspfNeighborExchangeLoading = ospfNeighborExchangeLoading.match(line).hasMatch();
+
+    const auto isInside = [](const QRegularExpressionMatch& inner,
+                             const QRegularExpressionMatch& outer) {
+        return outer.hasMatch() && inner.capturedStart() >= outer.capturedStart()
+            && inner.capturedEnd() <= outer.capturedEnd();
+    };
 
     enum class RuleGroup { Address, Keyword, Cisco };
     struct Rule {
@@ -2501,11 +2537,14 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
         {QRegularExpression(
              QStringLiteral(R"(\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b)")),
          QColor(0xc6, 0x78, 0xdd), 30, RuleGroup::Address},
-        {QRegularExpression(QStringLiteral(R"(\bERROR\b)"), QRegularExpression::CaseInsensitiveOption),
+        {QRegularExpression(
+             QStringLiteral(
+                 R"(\bERROR\b(?!\s+messages\s+limited\s+to\s+one\s+every\s+100\s+milliseconds\b))"),
+             QRegularExpression::CaseInsensitiveOption),
          QColor(0xf4, 0x47, 0x47), 20, RuleGroup::Keyword},
         {QRegularExpression(QStringLiteral(R"(\bWARN(?:ING)?\b)"), QRegularExpression::CaseInsensitiveOption),
          QColor(0xe5, 0xc0, 0x7b), 20, RuleGroup::Keyword},
-        {QRegularExpression(QStringLiteral(R"(\bOK\b)"), QRegularExpression::CaseInsensitiveOption),
+        {QRegularExpression(QStringLiteral(R"(\bOK\b(?!\?))"), QRegularExpression::CaseInsensitiveOption),
          QColor(0x23, 0xd1, 0x8b), 20, RuleGroup::Keyword},
         {QRegularExpression(QStringLiteral(R"(\bINFO\b)"), QRegularExpression::CaseInsensitiveOption),
          QColor(0x5c, 0xa1, 0xf6), 20, RuleGroup::Keyword},
@@ -2531,7 +2570,7 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
                             QRegularExpression::CaseInsensitiveOption),
          QColor(0xc6, 0x78, 0xdd), 26, RuleGroup::Cisco},
         {QRegularExpression(
-             QStringLiteral(R"(\b(?:up|connected|forwarding|established|full|enabled|success(?:ful)?|permit(?:ted)?)\b)"),
+             QStringLiteral(R"(\b(?:up|connected|forwarding|established|full|enabled|success(?:ful)?(?!\s+rate\b)|permit(?:ted)?)\b)"),
              QRegularExpression::CaseInsensitiveOption),
          QColor(0x23, 0xd1, 0x8b), 34, RuleGroup::Cisco},
         {QRegularExpression(
@@ -2539,7 +2578,7 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
              QRegularExpression::CaseInsensitiveOption),
          QColor(0xe5, 0xc0, 0x7b), 32, RuleGroup::Cisco},
         {QRegularExpression(
-             QStringLiteral(R"(\b(?:administratively\s+down|err-?disabled|notconnect|inactive|disabled|shutdown|down|failed|failure|timed\s+out|timeout\s+(?:while\s+)?waiting\s+for|CRC|input\s+errors?|output\s+errors?|runts?|giants?|overruns?|ignored|resets?|lost\s+carrier|no\s+carrier|late\s+collisions?|collisions?|drops?|dropped|discards?|discarded|denied?|unreachable|flapping)\b)"),
+             QStringLiteral(R"(\b(?:administratively\s+down|err-?disabled|notconnect|inactive|disabled|shutdown|down|timed\s+out|timeout\s+(?:while\s+)?waiting\s+for|unreachable|flapping)\b)"),
              QRegularExpression::CaseInsensitiveOption),
          QColor(0xf4, 0x47, 0x47), 55, RuleGroup::Cisco},
         // IOS syslog mnemonic with severity 0-3 = urgent/critical/error.
@@ -2594,10 +2633,29 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
                 && m.captured().compare(QLatin1String("unreachable"), Qt::CaseInsensitive) == 0) {
                 continue;
             }
-            if (parityDisabledMatch.hasMatch()
-                && m.captured().compare(QLatin1String("disabled"), Qt::CaseInsensitive) == 0
-                && m.capturedStart() >= parityDisabledMatch.capturedStart()
-                && m.capturedEnd() <= parityDisabledMatch.capturedEnd()) {
+            const bool isEnabled = m.captured().compare(QLatin1String("enabled"),
+                                                        Qt::CaseInsensitive)
+                == 0;
+            const bool isDisabled = m.captured().compare(QLatin1String("disabled"),
+                                                         Qt::CaseInsensitive)
+                == 0;
+            const bool isUpOrDown = m.captured().compare(QLatin1String("up"),
+                                                         Qt::CaseInsensitive)
+                    == 0
+                || m.captured().compare(QLatin1String("down"), Qt::CaseInsensitive) == 0;
+            const bool isExchangeOrLoading = m.captured().compare(QLatin1String("exchange"),
+                                                                  Qt::CaseInsensitive)
+                    == 0
+                || m.captured().compare(QLatin1String("loading"), Qt::CaseInsensitive) == 0;
+            if ((isDisabled && isInside(m, parityDisabledMatch))
+                || ((isEnabled || isDisabled)
+                    && (isInside(m, ospfSettingMatch) || isInside(m, ipInterfaceSettingMatch)))
+                || (isUpOrDown && isInside(m, upDownHeaderMatch))
+                || isInside(m, connectedRouteLegendMatch)
+                || isInside(m, macForwardingTableMatch)
+                || (isExchangeOrLoading && !hasOspfNeighborExchangeLoading)
+                || (suppressAclPermit
+                    && m.captured().compare(QLatin1String("permit"), Qt::CaseInsensitive) == 0)) {
                 continue;
             }
             const int a = m.capturedStart();

@@ -10,6 +10,7 @@
 #include <QEvent>
 #include <QFontMetrics>
 #include <QGraphicsOpacityEffect>
+#include <QHostAddress>
 #include <QInputEvent>
 #include <QKeyEvent>
 #include <QLabel>
@@ -2500,11 +2501,6 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
         {QRegularExpression(
              QStringLiteral(R"(\b(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b)")),
          QColor(0xc6, 0x78, 0xdd), 30, RuleGroup::Address},
-        // IPv6 (compressed forms included)
-        {QRegularExpression(
-             QStringLiteral(R"(\b(?:[0-9A-Fa-f]{1,4}:){2,7}[0-9A-Fa-f]{0,4}\b)")),
-         QColor(0x56, 0xb6, 0xc2), 28, RuleGroup::Address},
-
         {QRegularExpression(QStringLiteral(R"(\bERROR\b)"), QRegularExpression::CaseInsensitiveOption),
          QColor(0xf4, 0x47, 0x47), 20, RuleGroup::Keyword},
         {QRegularExpression(QStringLiteral(R"(\bWARN(?:ING)?\b)"), QRegularExpression::CaseInsensitiveOption),
@@ -2556,6 +2552,33 @@ QVector<QColor> TerminalWidget::highlightColorsForRow(int viewRow) const
     };
 
     QVector<int> pri(m_cols, -1);
+
+    if (wantAddr) {
+        // First collect colon-containing hexadecimal tokens, then let Qt validate
+        // them. A single regular expression is brittle for IPv6 because "::" can
+        // replace a different number of groups at any position in the address.
+        static const QRegularExpression ipv6Candidate(
+            QStringLiteral(
+                R"((?<![0-9A-Fa-f:])(?=[0-9A-Fa-f:]*:)[0-9A-Fa-f:]+(?![0-9A-Fa-f:]))"));
+        auto it = ipv6Candidate.globalMatch(line);
+        while (it.hasNext()) {
+            const QRegularExpressionMatch match = it.next();
+            QHostAddress address;
+            if (!address.setAddress(match.captured())
+                || address.protocol() != QAbstractSocket::IPv6Protocol) {
+                continue;
+            }
+
+            const int a = match.capturedStart();
+            const int b = match.capturedEnd(); // exclusive
+            for (int i = a; i < b && i < m_cols; ++i) {
+                if (28 >= pri[i]) {
+                    pri[i] = 28;
+                    colors[i] = QColor(0x56, 0xb6, 0xc2);
+                }
+            }
+        }
+    }
 
     for (const Rule& rule : rules) {
         const bool enabled = rule.group == RuleGroup::Address ? wantAddr
